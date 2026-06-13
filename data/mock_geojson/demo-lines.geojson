@@ -1,0 +1,119 @@
+{
+  "type": "FeatureCollection",
+  "name": "demo-lines",
+  "bbox": [
+    11.5638,
+    48.1336,
+    11.5828,
+    48.1422
+  ],
+  "features": [
+    {
+      "type": "Feature",
+      "id": "demo-line-001",
+      "properties": {
+        "title": "Innenstadt Achse West–Ost",
+        "dataset_id": "demo-lines",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Primäre Demo-Linie durch die Münchner Innenstadt für Tests von Auswahl, Verschieben und Linienbearbeitung."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [11.5638, 48.1393],
+          [11.5692, 48.1388],
+          [11.5755, 48.1374],
+          [11.5798, 48.1370],
+          [11.5828, 48.1368]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-line-002",
+      "properties": {
+        "title": "Innenstadt Achse Süd–Nord",
+        "dataset_id": "demo-lines",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Vertikale Demo-Linie für Editier- und Fit-to-Extent-Tests."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [11.5716, 48.1336],
+          [11.5728, 48.1352],
+          [11.5741, 48.1370],
+          [11.5759, 48.1395],
+          [11.5772, 48.1422]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-line-003",
+      "properties": {
+        "title": "Altstadtring Demo",
+        "dataset_id": "demo-lines",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Leicht gebogene Linie für Segmentbearbeitung und CAD-/Modify-Tests."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [11.5662, 48.1411],
+          [11.5701, 48.1400],
+          [11.5748, 48.1386],
+          [11.5791, 48.1376],
+          [11.5823, 48.1360]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-line-004",
+      "properties": {
+        "title": "Kurze Verbindungsroute",
+        "dataset_id": "demo-lines",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Kurze Route im südlichen Kartenbereich zum Testen kleiner Liniensegmente."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [11.5672, 48.1340],
+          [11.5708, 48.1346],
+          [11.5745, 48.1354]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-line-005",
+      "properties": {
+        "title": "Nordöstliche Verbindung",
+        "dataset_id": "demo-lines",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Zusätzliche Demo-Linie im nordöstlichen Bereich für Layer- und Editor-Tests."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [11.5763, 48.1409],
+          [11.5784, 48.1402],
+          [11.5805, 48.1390],
+          [11.5820, 48.1378]
+        ]
+      }
+    }
+  ]
+}

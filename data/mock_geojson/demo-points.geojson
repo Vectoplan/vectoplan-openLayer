@@ -1,0 +1,107 @@
+{
+  "type": "FeatureCollection",
+  "name": "demo-points",
+  "bbox": [
+    11.5639,
+    48.1334,
+    11.5824,
+    48.1419
+  ],
+  "features": [
+    {
+      "type": "Feature",
+      "id": "demo-point-001",
+      "properties": {
+        "title": "Marienplatz",
+        "dataset_id": "demo-points",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Zentraler Demo-Punkt für Tests der Punktdarstellung und des Editors."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.57549,
+          48.13743
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-point-002",
+      "properties": {
+        "title": "Sendlinger Tor",
+        "dataset_id": "demo-points",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Demo-Punkt südwestlich des Kartenmittelpunkts."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.56774,
+          48.13402
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-point-003",
+      "properties": {
+        "title": "Isartor",
+        "dataset_id": "demo-points",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Östlicher Demo-Punkt für Verschieben, Selektieren und Bearbeiten."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.5824,
+          48.13672
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-point-004",
+      "properties": {
+        "title": "Odeonsplatz",
+        "dataset_id": "demo-points",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Nördlicher Demo-Punkt für Zoom- und Fit-Tests."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.57767,
+          48.1419
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-point-005",
+      "properties": {
+        "title": "Stachus",
+        "dataset_id": "demo-points",
+        "status": "active",
+        "editable": true,
+        "placeholder": true,
+        "description": "Westlicher Demo-Punkt für Layer- und Editor-Tests."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.5639,
+          48.13924
+        ]
+      }
+    }
+  ]
+}

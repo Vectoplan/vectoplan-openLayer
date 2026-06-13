@@ -1,0 +1,92 @@
+{
+  "type": "FeatureCollection",
+  "name": "bestands-punkte",
+  "bbox": [
+    11.5652,
+    48.1348,
+    11.5819,
+    48.1413
+  ],
+  "features": [
+    {
+      "type": "Feature",
+      "id": "bestand-point-001",
+      "properties": {
+        "title": "Bestandspunkt A",
+        "dataset_id": "bestands-punkte-readonly",
+        "status": "active",
+        "editable": false,
+        "placeholder": true,
+        "category": "bestand",
+        "description": "Readonly-Bestandspunkt im westlichen Innenstadtbereich."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.5652,
+          48.1391
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bestand-point-002",
+      "properties": {
+        "title": "Bestandspunkt B",
+        "dataset_id": "bestands-punkte-readonly",
+        "status": "active",
+        "editable": false,
+        "placeholder": true,
+        "category": "bestand",
+        "description": "Readonly-Bestandspunkt nahe Kartenzentrum."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.5739,
+          48.1372
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bestand-point-003",
+      "properties": {
+        "title": "Bestandspunkt C",
+        "dataset_id": "bestands-punkte-readonly",
+        "status": "active",
+        "editable": false,
+        "placeholder": true,
+        "category": "bestand",
+        "description": "Readonly-Bestandspunkt im nordöstlichen Bereich."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.5819,
+          48.1413
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bestand-point-004",
+      "properties": {
+        "title": "Bestandspunkt D",
+        "dataset_id": "bestands-punkte-readonly",
+        "status": "active",
+        "editable": false,
+        "placeholder": true,
+        "category": "bestand",
+        "description": "Readonly-Bestandspunkt im südlichen Bereich."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.5707,
+          48.1348
+        ]
+      }
+    }
+  ]
+}

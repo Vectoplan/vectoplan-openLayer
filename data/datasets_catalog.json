@@ -1,0 +1,160 @@
+{
+  "version": "1.0",
+  "service": "openlayer",
+  "description": "Platzhalter-Katalog für die Datensatzliste im OpenLayer-UI-Service. Diese Datei definiert aktive und inaktive Datensätze, die links oben in der Toolbar angezeigt werden können. Später kann sie durch ein anderes Microservice oder eine HTTP-Quelle ersetzt werden.",
+  "updated_at": "2026-03-22T00:00:00Z",
+  "items": [
+    {
+      "id": "demo-points",
+      "title": "Demo Punkte",
+      "description": "Editierbarer Platzhalter-Datensatz für Punktobjekte. Gedacht zum Testen von Auswahl, Anzeige und OpenLayers-Editor.",
+      "active": true,
+      "editable": true,
+      "geometry_type": "Point",
+      "source": {
+        "type": "geojson",
+        "format": "geojson",
+        "url": "/static/mock_geojson/demo-points.geojson"
+      },
+      "capabilities": {
+        "read": true,
+        "create": true,
+        "update": true,
+        "delete": true
+      }
+    },
+    {
+      "id": "demo-lines",
+      "title": "Demo Linien",
+      "description": "Editierbarer Platzhalter-Datensatz für Linienobjekte. Gedacht zum Testen von Zeichnen, Verschieben und Bearbeiten im Editor.",
+      "active": true,
+      "editable": true,
+      "geometry_type": "LineString",
+      "source": {
+        "type": "geojson",
+        "format": "geojson",
+        "url": "/static/mock_geojson/demo-lines.geojson"
+      },
+      "capabilities": {
+        "read": true,
+        "create": true,
+        "update": true,
+        "delete": true
+      }
+    },
+    {
+      "id": "bestands-punkte-readonly",
+      "title": "Bestandspunkte (nur Ansicht)",
+      "description": "Aktiver Punkt-Datensatz zur reinen Anzeige. Editor soll für diesen Datensatz nicht aktiviert werden.",
+      "active": true,
+      "editable": false,
+      "geometry_type": "Point",
+      "source": {
+        "type": "geojson",
+        "format": "geojson",
+        "url": "/static/mock_geojson/bestands-punkte.geojson"
+      },
+      "capabilities": {
+        "read": true,
+        "create": false,
+        "update": false,
+        "delete": false
+      }
+    },
+    {
+      "id": "bestands-linien-readonly",
+      "title": "Bestandslinien (nur Ansicht)",
+      "description": "Aktiver Linien-Datensatz zur reinen Anzeige. Eignet sich für UI-Tests mit einer nicht editierbaren Linie.",
+      "active": true,
+      "editable": false,
+      "geometry_type": "LineString",
+      "source": {
+        "type": "geojson",
+        "format": "geojson",
+        "url": "/static/mock_geojson/bestands-linien.geojson"
+      },
+      "capabilities": {
+        "read": true,
+        "create": false,
+        "update": false,
+        "delete": false
+      }
+    },
+    {
+      "id": "future-wfs-points",
+      "title": "Zukünftige WFS Punkte",
+      "description": "Vertraglicher Platzhalter für einen später vom Orchestrator gelieferten WFS-Punktdatensatz.",
+      "active": true,
+      "editable": true,
+      "geometry_type": "Point",
+      "source": {
+        "type": "wfs",
+        "format": "wfs",
+        "url": "http://localhost:8010/api/wfs/demo-points"
+      },
+      "capabilities": {
+        "read": true,
+        "create": true,
+        "update": true,
+        "delete": true
+      }
+    },
+    {
+      "id": "future-wfs-lines",
+      "title": "Zukünftige WFS Linien",
+      "description": "Vertraglicher Platzhalter für einen später vom Orchestrator gelieferten WFS-Liniendatensatz.",
+      "active": true,
+      "editable": true,
+      "geometry_type": "LineString",
+      "source": {
+        "type": "wfs",
+        "format": "wfs",
+        "url": "http://localhost:8010/api/wfs/demo-lines"
+      },
+      "capabilities": {
+        "read": true,
+        "create": true,
+        "update": true,
+        "delete": true
+      }
+    },
+    {
+      "id": "archiv-punkte-inaktiv",
+      "title": "Archiv Punkte (inaktiv)",
+      "description": "Inaktiver Beispieldatensatz. Wird standardmäßig nicht gelistet und erscheint nur mit include_inactive=1.",
+      "active": false,
+      "editable": false,
+      "geometry_type": "Point",
+      "source": {
+        "type": "geojson",
+        "format": "geojson",
+        "url": "/static/mock_geojson/archiv-punkte.geojson"
+      },
+      "capabilities": {
+        "read": true,
+        "create": false,
+        "update": false,
+        "delete": false
+      }
+    },
+    {
+      "id": "archiv-linien-inaktiv",
+      "title": "Archiv Linien (inaktiv)",
+      "description": "Inaktiver Beispieldatensatz für Filter- und Listenlogik.",
+      "active": false,
+      "editable": false,
+      "geometry_type": "LineString",
+      "source": {
+        "type": "geojson",
+        "format": "geojson",
+        "url": "/static/mock_geojson/archiv-linien.geojson"
+      },
+      "capabilities": {
+        "read": true,
+        "create": false,
+        "update": false,
+        "delete": false
+      }
+    }
+  ]
+}
