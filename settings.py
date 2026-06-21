@@ -1,12 +1,15 @@
-# /services/openLayer/settings.py
+# services/vectoplan-openLayer/settings.py
 from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlsplit
+
 
 # ─────────────────────────────────────────────────────────────
 # Pfade
@@ -21,15 +24,33 @@ MOCK_GEOJSON_DIR = DATA_DIR / "mock_geojson"
 VENDOR_OL_DIR = STATIC_DIR / "vendor" / "ol"
 VENDOR_OLE_DIR = STATIC_DIR / "vendor" / "openlayers-editor"
 
+
 # ─────────────────────────────────────────────────────────────
 # Defaults
 # ─────────────────────────────────────────────────────────────
 
 DEFAULT_SERVICE_NAME = "openlayer"
-DEFAULT_SERVICE_VERSION = "0.2.0"
+DEFAULT_SERVICE_VERSION = "0.3.0"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8090
 DEFAULT_LOG_LEVEL = "INFO"
+
+# Browser-facing URL. This is the Docker-published host port.
+# The browser must not be redirected to localhost:8090.
+DEFAULT_OPENLAYER_PUBLIC_URL = "http://localhost:5190"
+DEFAULT_OPENLAYER_ROUTE = "/map"
+
+# The parent app that embeds OpenLayer in an iframe.
+DEFAULT_VECTOPLAN_APP_PUBLIC_URL = "http://localhost:5103"
+DEFAULT_OPENLAYER_FRAME_ANCESTORS = (
+    "http://localhost:5103",
+    "http://127.0.0.1:5103",
+)
+
+DEFAULT_OPENLAYER_EMBED_ENABLED = True
+DEFAULT_OPENLAYER_CSP_ENABLED = True
+DEFAULT_OPENLAYER_REMOVE_X_FRAME_OPTIONS_ON_EMBED = True
+DEFAULT_OPENLAYER_X_FRAME_OPTIONS_DEFAULT = "SAMEORIGIN"
 
 DEFAULT_LON = 11.576124
 DEFAULT_LAT = 48.137154
@@ -41,9 +62,10 @@ DEFAULT_TILE_SIZE = 512
 
 DEFAULT_ALLOWED_ORIGINS = ("*",)
 
-_TRUE_VALUES = frozenset({"1", "true", "t", "yes", "y", "on"})
-_FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off"})
+_TRUE_VALUES = frozenset({"1", "true", "t", "yes", "y", "on", "enabled", "ja"})
+_FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off", "disabled", "nein"})
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+_SPLIT_RE = re.compile(r"[\s,;]+")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -60,6 +82,7 @@ class Settings:
     - .env wird tolerant gelesen, Prozess-ENV hat Vorrang
     - robuste Fallbacks bei Parse-Fehlern
     - per Cache nur einmal aufgebaut
+    - klare Trennung zwischen internem Service-Port und Browser-/iframe-URL
     """
 
     service_root: Path
@@ -80,6 +103,17 @@ class Settings:
 
     allowed_origins: tuple[str, ...]
     mapbox_token: str
+
+    # Public / iframe integration
+    openlayer_public_url: str
+    openlayer_route: str
+    openlayer_embed_enabled: bool
+    openlayer_csp_enabled: bool
+    openlayer_frame_ancestors: tuple[str, ...]
+    openlayer_frame_ancestors_csp: str
+    openlayer_remove_x_frame_options_on_embed: bool
+    openlayer_x_frame_options_default: str
+    vectoplan_app_public_url: str
 
     map_default_lon: float
     map_default_lat: float
@@ -114,6 +148,14 @@ class Settings:
     def map_default_center(self) -> tuple[float, float]:
         return (self.map_default_lon, self.map_default_lat)
 
+    @property
+    def openlayer_public_base_url(self) -> str:
+        return self.openlayer_public_url
+
+    @property
+    def public_map_url(self) -> str:
+        return _join_public_url(self.openlayer_public_url, self.openlayer_route)
+
     def resolve_required_files(self) -> dict[str, Path]:
         result: dict[str, Path] = {}
         try:
@@ -138,7 +180,17 @@ class Settings:
                 return True
             if not origin:
                 return False
-            return origin in self.allowed_origins
+            normalized = _normalize_origin(origin)
+            return bool(normalized and normalized in self.allowed_origins)
+        except Exception:
+            return False
+
+    def frame_origin_is_allowed(self, origin: str | None) -> bool:
+        try:
+            if not origin:
+                return False
+            normalized = _normalize_origin(origin)
+            return bool(normalized and normalized in self.openlayer_frame_ancestors)
         except Exception:
             return False
 
@@ -151,19 +203,42 @@ class Settings:
             "SERVICE_VERSION": self.service_version,
             "HOST": self.host,
             "OPENLAYER_PORT": self.port,
+            "PORT": self.port,
             "LOG_LEVEL": self.log_level,
             "FLASK_DEBUG": self.flask_debug,
             "ALLOWED_ORIGINS": list(self.allowed_origins),
             "MAPBOX_TOKEN": self.mapbox_token,
+
+            # Public / iframe integration
+            "OPENLAYER_PUBLIC_URL": self.openlayer_public_url,
+            "OPENLAYER_PUBLIC_BASE_URL": self.openlayer_public_base_url,
+            "OPENLAYER_ROUTE": self.openlayer_route,
+            "OPENLAYER_PUBLIC_MAP_URL": self.public_map_url,
+            "OPENLAYER_EMBED_ENABLED": self.openlayer_embed_enabled,
+            "OPENLAYER_CSP_ENABLED": self.openlayer_csp_enabled,
+            "OPENLAYER_FRAME_ANCESTORS": list(self.openlayer_frame_ancestors),
+            "OPENLAYER_ALLOWED_FRAME_PARENTS": list(self.openlayer_frame_ancestors),
+            "OPENLAYER_FRAME_ANCESTORS_CSP": self.openlayer_frame_ancestors_csp,
+            "OPENLAYER_REMOVE_X_FRAME_OPTIONS_ON_EMBED": self.openlayer_remove_x_frame_options_on_embed,
+            "OPENLAYER_X_FRAME_OPTIONS_DEFAULT": self.openlayer_x_frame_options_default,
+            "VECTOPLAN_APP_PUBLIC_URL": self.vectoplan_app_public_url,
+
             "DEFAULT_LON": self.map_default_lon,
             "DEFAULT_LAT": self.map_default_lat,
             "DEFAULT_ZOOM": self.map_default_zoom,
+            "MAP_DEFAULT_LON": self.map_default_lon,
+            "MAP_DEFAULT_LAT": self.map_default_lat,
+            "MAP_DEFAULT_ZOOM": self.map_default_zoom,
+            "MAP_DEFAULT_CENTER": [self.map_default_lon, self.map_default_lat],
             "MAP_MIN_ZOOM": self.map_min_zoom,
             "MAP_MAX_ZOOM": self.map_max_zoom,
             "MAPBOX_DEFAULT_STYLE": self.map_default_style,
+            "MAP_STYLE_ID": self.map_default_style,
             "MAP_TILE_SIZE": self.map_tile_size,
             "DISABLE_SCROLL": self.map_disable_scroll,
+            "MAP_DISABLE_SCROLL": self.map_disable_scroll,
             "ENABLE_WHEEL_ZOOM": self.map_enable_wheel_zoom,
+            "MAP_ENABLE_WHEEL_ZOOM": self.map_enable_wheel_zoom,
             "DATASET_API_ENABLED": self.dataset_api_enabled,
             "EDITOR_ENABLED": self.editor_enabled,
             "DATASET_CATALOG_PATH": str(self.dataset_catalog_path),
@@ -193,6 +268,20 @@ class Settings:
             "flask_debug": self.flask_debug,
             "allowed_origins": list(self.allowed_origins),
             "has_mapbox_token": self.has_mapbox_token,
+            "public": {
+                "openlayer_public_url": self.openlayer_public_url,
+                "openlayer_route": self.openlayer_route,
+                "public_map_url": self.public_map_url,
+                "vectoplan_app_public_url": self.vectoplan_app_public_url,
+            },
+            "embed": {
+                "enabled": self.openlayer_embed_enabled,
+                "csp_enabled": self.openlayer_csp_enabled,
+                "frame_ancestors": list(self.openlayer_frame_ancestors),
+                "frame_ancestors_csp": self.openlayer_frame_ancestors_csp,
+                "remove_x_frame_options_on_embed": self.openlayer_remove_x_frame_options_on_embed,
+                "x_frame_options_default": self.openlayer_x_frame_options_default,
+            },
             "map": {
                 "lon": self.map_default_lon,
                 "lat": self.map_default_lat,
@@ -225,7 +314,7 @@ class Settings:
 
 
 # ─────────────────────────────────────────────────────────────
-# Helper
+# Cache / Reload
 # ─────────────────────────────────────────────────────────────
 
 def clear_settings_cache() -> None:
@@ -239,6 +328,10 @@ def reload_settings() -> Settings:
     clear_settings_cache()
     return get_settings()
 
+
+# ─────────────────────────────────────────────────────────────
+# Helper
+# ─────────────────────────────────────────────────────────────
 
 def _clean_env_value(value: str) -> str:
     try:
@@ -351,7 +444,8 @@ def _parse_bool(
     default: bool,
     notes: list[str],
 ) -> bool:
-    raw = _first_non_blank(env, *tuple(names))
+    names_tuple = tuple(names)
+    raw = _first_non_blank(env, *names_tuple)
     if raw is None:
         return default
 
@@ -362,7 +456,7 @@ def _parse_bool(
         return False
 
     try:
-        joined = ",".join(names)
+        joined = ",".join(names_tuple)
     except Exception:
         joined = "unknown"
     notes.append(f"Bool-Parse fehlgeschlagen für {joined!r}: {raw!r}")
@@ -378,7 +472,8 @@ def _parse_int(
     minimum: int | None = None,
     maximum: int | None = None,
 ) -> int:
-    raw = _first_non_blank(env, *tuple(names))
+    names_tuple = tuple(names)
+    raw = _first_non_blank(env, *names_tuple)
     if raw is None:
         value = default
     else:
@@ -386,7 +481,7 @@ def _parse_int(
             value = int(str(raw).strip())
         except Exception:
             try:
-                joined = ",".join(names)
+                joined = ",".join(names_tuple)
             except Exception:
                 joined = "unknown"
             notes.append(f"Int-Parse fehlgeschlagen für {joined!r}: {raw!r}")
@@ -408,7 +503,8 @@ def _parse_float(
     minimum: float | None = None,
     maximum: float | None = None,
 ) -> float:
-    raw = _first_non_blank(env, *tuple(names))
+    names_tuple = tuple(names)
+    raw = _first_non_blank(env, *names_tuple)
     if raw is None:
         value = default
     else:
@@ -416,7 +512,7 @@ def _parse_float(
             value = float(str(raw).strip())
         except Exception:
             try:
-                joined = ",".join(names)
+                joined = ",".join(names_tuple)
             except Exception:
                 joined = "unknown"
             notes.append(f"Float-Parse fehlgeschlagen für {joined!r}: {raw!r}")
@@ -453,7 +549,7 @@ def _parse_string_list(raw: str | None) -> list[str]:
         pass
 
     try:
-        return [item.strip() for item in text.split(",") if item.strip()]
+        return [item.strip() for item in _SPLIT_RE.split(text) if item.strip()]
     except Exception:
         return []
 
@@ -477,8 +573,95 @@ def _unique_tuple(items: Iterable[str], fallback: tuple[str, ...]) -> tuple[str,
     return tuple(result) if result else fallback
 
 
+def _normalize_origin(origin: str | None, default: str = "") -> str:
+    """
+    Normalize an origin for CORS/CSP.
+
+    - '*' is returned only where callers explicitly keep it.
+    - http(s) URLs are reduced to scheme://host[:port].
+    - invalid values return default.
+    """
+    if origin is None:
+        return default
+
+    try:
+        raw = str(origin).strip()
+    except Exception:
+        return default
+
+    if not raw:
+        return default
+
+    if raw in {"self", "'self'"}:
+        return "'self'"
+
+    if raw == "*":
+        return "*"
+
+    if not (raw.startswith("http://") or raw.startswith("https://")):
+        return default
+
+    try:
+        parsed = urlsplit(raw)
+        if not parsed.scheme or not parsed.netloc:
+            return default
+        return f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        return default
+
+
+def _normalize_url(raw: str | None, default: str) -> str:
+    if raw is None:
+        return default.rstrip("/")
+
+    try:
+        text = str(raw).strip().rstrip("/")
+        if not text:
+            return default.rstrip("/")
+        if not (text.startswith("http://") or text.startswith("https://")):
+            return default.rstrip("/")
+        return text
+    except Exception:
+        return default.rstrip("/")
+
+
+def _normalize_route(raw: str | None, default: str) -> str:
+    if raw is None:
+        return default
+
+    try:
+        text = str(raw).strip()
+        if not text:
+            return default
+        if not text.startswith("/"):
+            text = "/" + text
+        while "//" in text:
+            text = text.replace("//", "/")
+        if len(text) > 1:
+            text = text.rstrip("/")
+        return text
+    except Exception:
+        return default
+
+
+def _join_public_url(base_url: str, route: str) -> str:
+    try:
+        base = _normalize_url(base_url, DEFAULT_OPENLAYER_PUBLIC_URL)
+        path = _normalize_route(route, DEFAULT_OPENLAYER_ROUTE)
+
+        if base.endswith(path):
+            return base
+
+        if path == "/":
+            return base
+
+        return f"{base}{path}"
+    except Exception:
+        return f"{DEFAULT_OPENLAYER_PUBLIC_URL}{DEFAULT_OPENLAYER_ROUTE}"
+
+
 def _parse_allowed_origins(env: Mapping[str, str], notes: list[str]) -> tuple[str, ...]:
-    raw = _first_non_blank(env, "ALLOWED_ORIGINS")
+    raw = _first_non_blank(env, "ALLOWED_ORIGINS", "CORS_ALLOWED_ORIGINS")
     if raw is None:
         return DEFAULT_ALLOWED_ORIGINS
 
@@ -487,7 +670,84 @@ def _parse_allowed_origins(env: Mapping[str, str], notes: list[str]) -> tuple[st
         notes.append("ALLOWED_ORIGINS leer oder ungültig → '*'")
         return DEFAULT_ALLOWED_ORIGINS
 
-    return _unique_tuple(items, DEFAULT_ALLOWED_ORIGINS)
+    normalized: list[str] = []
+    wildcard = False
+
+    for item in items:
+        origin = _normalize_origin(item)
+        if origin == "*":
+            wildcard = True
+            continue
+        if origin and origin not in normalized:
+            normalized.append(origin)
+
+    if wildcard:
+        return DEFAULT_ALLOWED_ORIGINS
+
+    return _unique_tuple(normalized, DEFAULT_ALLOWED_ORIGINS)
+
+
+def _parse_frame_ancestors(env: Mapping[str, str], notes: list[str], app_public_url: str) -> tuple[str, ...]:
+    raw = _first_non_blank(
+        env,
+        "OPENLAYER_FRAME_ANCESTORS",
+        "OPENLAYER_ALLOWED_FRAME_PARENTS",
+        "VECTOPLAN_ALLOWED_FRAME_PARENTS",
+        "FRAME_ANCESTORS",
+    )
+
+    if raw is None:
+        items = list(DEFAULT_OPENLAYER_FRAME_ANCESTORS)
+    else:
+        items = _parse_string_list(raw)
+        if not items:
+            notes.append("OPENLAYER_FRAME_ANCESTORS leer oder ungültig → lokale App-Origins")
+            items = list(DEFAULT_OPENLAYER_FRAME_ANCESTORS)
+
+    app_origin = _normalize_origin(app_public_url)
+    normalized: list[str] = []
+
+    if app_origin:
+        normalized.append(app_origin)
+
+    for item in items:
+        origin = _normalize_origin(item)
+        if not origin or origin == "*":
+            if str(item).strip() == "*":
+                notes.append("Wildcard '*' in OPENLAYER_FRAME_ANCESTORS ignoriert")
+            continue
+        if origin not in normalized:
+            normalized.append(origin)
+
+    return tuple(normalized) if normalized else DEFAULT_OPENLAYER_FRAME_ANCESTORS
+
+
+def _frame_ancestors_csp(ancestors: tuple[str, ...], include_self: bool = True) -> str:
+    result: list[str] = []
+
+    if include_self:
+        result.append("'self'")
+
+    for ancestor in ancestors:
+        origin = _normalize_origin(ancestor)
+        if not origin or origin == "*":
+            continue
+        if origin not in result:
+            result.append(origin)
+
+    return " ".join(result) if result else "'self'"
+
+
+def _normalize_x_frame_options(raw: str | None, default: str = DEFAULT_OPENLAYER_X_FRAME_OPTIONS_DEFAULT) -> str:
+    try:
+        value = str(raw or default).strip().upper()
+    except Exception:
+        value = default
+
+    if value in {"DENY", "SAMEORIGIN"}:
+        return value
+
+    return default
 
 
 def _normalize_log_level(raw: str | None, notes: list[str]) -> str:
@@ -599,7 +859,95 @@ def get_settings() -> Settings:
 
     allowed_origins = _parse_allowed_origins(env, notes)
 
-    mapbox_token = _first_non_blank(env, "MAPBOX_TOKEN") or ""
+    mapbox_token = _first_non_blank(
+        env,
+        "MAPBOX_TOKEN",
+        "MAPBOX_ACCESS_TOKEN",
+    ) or ""
+
+    openlayer_public_url = _normalize_url(
+        _first_non_blank(
+            env,
+            "OPENLAYER_PUBLIC_URL",
+            "OPENLAYER_PUBLIC_BASE_URL",
+            "VECTOPLAN_OPENLAYER_PUBLIC_URL",
+        ),
+        DEFAULT_OPENLAYER_PUBLIC_URL,
+    )
+
+    openlayer_route = _normalize_route(
+        _first_non_blank(
+            env,
+            "OPENLAYER_ROUTE",
+            "VECTOPLAN_OPENLAYER_ROUTE",
+            "MAP_ROUTE",
+        ),
+        DEFAULT_OPENLAYER_ROUTE,
+    )
+
+    vectoplan_app_public_url = _normalize_url(
+        _first_non_blank(
+            env,
+            "VECTOPLAN_APP_PUBLIC_URL",
+            "VECTOPLAN_APP_PUBLIC_BASE_URL",
+            "APP_PUBLIC_URL",
+        ),
+        DEFAULT_VECTOPLAN_APP_PUBLIC_URL,
+    )
+
+    openlayer_embed_enabled = _parse_bool(
+        env,
+        (
+            "OPENLAYER_EMBED_ENABLED",
+            "VECTOPLAN_OPENLAYER_EMBED_ENABLED",
+            "MAP_EMBED_ENABLED",
+        ),
+        DEFAULT_OPENLAYER_EMBED_ENABLED,
+        notes,
+    )
+
+    openlayer_csp_enabled = _parse_bool(
+        env,
+        (
+            "OPENLAYER_CSP_ENABLED",
+            "VECTOPLAN_OPENLAYER_CSP_ENABLED",
+            "MAP_CSP_ENABLED",
+        ),
+        DEFAULT_OPENLAYER_CSP_ENABLED,
+        notes,
+    )
+
+    openlayer_remove_x_frame_options_on_embed = _parse_bool(
+        env,
+        (
+            "OPENLAYER_REMOVE_X_FRAME_OPTIONS_ON_EMBED",
+            "VECTOPLAN_OPENLAYER_REMOVE_X_FRAME_OPTIONS_ON_EMBED",
+            "MAP_REMOVE_X_FRAME_OPTIONS_ON_EMBED",
+        ),
+        DEFAULT_OPENLAYER_REMOVE_X_FRAME_OPTIONS_ON_EMBED,
+        notes,
+    )
+
+    openlayer_x_frame_options_default = _normalize_x_frame_options(
+        _first_non_blank(
+            env,
+            "OPENLAYER_X_FRAME_OPTIONS_DEFAULT",
+            "VECTOPLAN_OPENLAYER_X_FRAME_OPTIONS_DEFAULT",
+            "MAP_X_FRAME_OPTIONS_DEFAULT",
+        ),
+        DEFAULT_OPENLAYER_X_FRAME_OPTIONS_DEFAULT,
+    )
+
+    openlayer_frame_ancestors = _parse_frame_ancestors(
+        env,
+        notes,
+        vectoplan_app_public_url,
+    )
+
+    openlayer_frame_ancestors_csp = _frame_ancestors_csp(
+        openlayer_frame_ancestors,
+        include_self=True,
+    )
 
     # Zentrum: zuerst MAP_DEFAULT_CENTER, dann Einzelwerte
     center = _parse_center_from_single_value(_first_non_blank(env, "MAP_DEFAULT_CENTER"), notes)
@@ -656,8 +1004,20 @@ def get_settings() -> Settings:
         )
         map_max_zoom = map_min_zoom
 
+    if map_default_zoom < map_min_zoom:
+        notes.append(
+            f"MAP_DEFAULT_ZOOM ({map_default_zoom}) < MAP_MIN_ZOOM ({map_min_zoom}) → Wert korrigiert"
+        )
+        map_default_zoom = map_min_zoom
+
+    if map_default_zoom > map_max_zoom:
+        notes.append(
+            f"MAP_DEFAULT_ZOOM ({map_default_zoom}) > MAP_MAX_ZOOM ({map_max_zoom}) → Wert korrigiert"
+        )
+        map_default_zoom = map_max_zoom
+
     map_default_style = (
-        _first_non_blank(env, "MAPBOX_DEFAULT_STYLE", "MAP_STYLE_ID")
+        _first_non_blank(env, "MAPBOX_DEFAULT_STYLE", "MAP_STYLE_ID", "MAPBOX_STYLE_ID")
         or DEFAULT_MAPBOX_STYLE
     )
 
@@ -736,6 +1096,15 @@ def get_settings() -> Settings:
         flask_debug=flask_debug,
         allowed_origins=allowed_origins,
         mapbox_token=mapbox_token,
+        openlayer_public_url=openlayer_public_url,
+        openlayer_route=openlayer_route,
+        openlayer_embed_enabled=openlayer_embed_enabled,
+        openlayer_csp_enabled=openlayer_csp_enabled,
+        openlayer_frame_ancestors=openlayer_frame_ancestors,
+        openlayer_frame_ancestors_csp=openlayer_frame_ancestors_csp,
+        openlayer_remove_x_frame_options_on_embed=openlayer_remove_x_frame_options_on_embed,
+        openlayer_x_frame_options_default=openlayer_x_frame_options_default,
+        vectoplan_app_public_url=vectoplan_app_public_url,
         map_default_lon=map_default_lon,
         map_default_lat=map_default_lat,
         map_default_zoom=map_default_zoom,
