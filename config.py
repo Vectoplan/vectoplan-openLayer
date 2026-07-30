@@ -10,10 +10,10 @@ MAPBOX_TOKEN = os.getenv(
 # Startansicht
 DEFAULT_LON = float(os.getenv("DEFAULT_LON", "11.576124"))  # München
 DEFAULT_LAT = float(os.getenv("DEFAULT_LAT", "48.137154"))
-DEFAULT_ZOOM = int(os.getenv("DEFAULT_ZOOM", "14"))
+DEFAULT_ZOOM = int(os.getenv("DEFAULT_ZOOM", "17"))
 
 # UI
-DISABLE_SCROLL = os.getenv("DISABLE_SCROLL", "1") == "1"
+DISABLE_SCROLL = os.getenv("DISABLE_SCROLL", "0") == "1"
 
 # WFS-Proxy-Whitelist (Komma-separiert, ohne Protokoll optional)
 WFS_PROXY_WHITELIST = [

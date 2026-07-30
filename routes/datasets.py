@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from flask import Blueprint, Response, current_app, jsonify, make_response, request, url_for
@@ -89,10 +90,32 @@ except Exception:  # pragma: no cover
             "Stelle sicher, dass 'src/styles/style_adapter.py' vorhanden ist."
         ) from exc
 
+try:
+    from src.exports.export_service import (
+        ExportUnavailableError,
+        build_export_artifact,
+        pdf_bbox_for_scale,
+    )
+except Exception:  # pragma: no cover
+    try:
+        from ..src.exports.export_service import (  # type: ignore
+            ExportUnavailableError,
+            build_export_artifact,
+            pdf_bbox_for_scale,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(
+            "routes.datasets could not import the export service."
+        ) from exc
+
 
 bp = Blueprint("datasets", __name__)
 
 _TRUE_VALUES = frozenset({"1", "true", "t", "yes", "y", "on", "ja"})
+_EARTH_RADIUS_METERS = 6_378_137.0
+_MAX_DATASET_RADIUS_METERS = 400
+_DEFAULT_DATASET_BATCH_SIZE = 100
+_MAX_DATASET_BATCH_SIZE = 250
 _FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off", "nein"})
 
 _GEOMETRY_MAP = {
@@ -383,6 +406,37 @@ def _query_int(name: str, default: int) -> int:
         return default
 
 
+
+def _query_float(name: str, default: float) -> float:
+    try:
+        value = float(request.args.get(name, default))
+        return value if math.isfinite(value) else float(default)
+    except Exception:
+        return float(default)
+
+
+def _query_bbox(*, required: bool = False) -> Optional[Tuple[float, float, float, float]]:
+    raw_value = _query_text("bbox", "")
+    if not raw_value:
+        if required:
+            raise ValueError("bbox query parameter is required")
+        return None
+
+    parts = [part.strip() for part in raw_value.split(",")]
+    if len(parts) != 4:
+        raise ValueError("bbox must contain minLon,minLat,maxLon,maxLat")
+    try:
+        values = tuple(float(part) for part in parts)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("bbox contains invalid coordinates") from exc
+
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("bbox contains non-finite coordinates")
+    if values[0] >= values[2] or values[1] >= values[3]:
+        raise ValueError("bbox must contain minLon,minLat,maxLon,maxLat")
+    if values[0] < -180 or values[2] > 180 or values[1] < -90 or values[3] > 90:
+        raise ValueError("bbox must be inside EPSG:4326 bounds")
+    return values
 def _get_request_json_object(optional: bool = True) -> dict[str, Any]:
     try:
         data = request.get_json(silent=True)
@@ -441,6 +495,100 @@ def _safe_mapping(value: Any) -> dict[str, Any]:
     except Exception:
         return {}
 
+def _configured_dataset_feature_limit() -> int:
+    settings = _settings()
+    return min(
+        1000,
+        max(1, _safe_int(getattr(settings, "dataset_feature_limit", 1000), 1000)),
+    )
+
+
+
+def _configured_dataset_radius_meters() -> int:
+    settings = _settings()
+    return min(
+        _MAX_DATASET_RADIUS_METERS,
+        max(1, _safe_int(getattr(settings, "dataset_radius_meters", 400), 400)),
+    )
+
+
+def _location_center(
+    requested_bbox: Optional[Tuple[float, float, float, float]],
+) -> Tuple[float, float]:
+    raw_lon = _query_text("lon", "")
+    raw_lat = _query_text("lat", "")
+    if bool(raw_lon) != bool(raw_lat):
+        raise ValueError("lon and lat query parameters must be provided together")
+
+    if raw_lon and raw_lat:
+        center_lon = float(raw_lon)
+        center_lat = float(raw_lat)
+    elif requested_bbox is not None:
+        center_lon = (requested_bbox[0] + requested_bbox[2]) / 2.0
+        center_lat = (requested_bbox[1] + requested_bbox[3]) / 2.0
+    else:
+        raise ValueError("lon and lat query parameters are required")
+
+    if not math.isfinite(center_lon) or not math.isfinite(center_lat):
+        raise ValueError("lon and lat must be finite")
+    if center_lon < -180 or center_lon > 180 or center_lat < -90 or center_lat > 90:
+        raise ValueError("lon and lat must be inside EPSG:4326 bounds")
+    return center_lon, center_lat
+
+
+def _bbox_for_location_radius(
+    center: Tuple[float, float],
+    radius_meters: int,
+) -> Tuple[float, float, float, float]:
+    center_lon, center_lat = center
+    safe_radius = min(_MAX_DATASET_RADIUS_METERS, max(1, int(radius_meters)))
+    latitude_delta = math.degrees(safe_radius / _EARTH_RADIUS_METERS)
+    longitude_scale = max(0.000001, abs(math.cos(math.radians(center_lat))))
+    longitude_delta = math.degrees(safe_radius / (_EARTH_RADIUS_METERS * longitude_scale))
+    return (
+        max(-180.0, center_lon - longitude_delta),
+        max(-90.0, center_lat - latitude_delta),
+        min(180.0, center_lon + longitude_delta),
+        min(90.0, center_lat + latitude_delta),
+    )
+
+
+def _paginate_feature_collection(
+    payload: Mapping[str, Any],
+    *,
+    offset: int,
+    batch_size: int,
+    feature_limit: int,
+) -> Tuple[dict[str, Any], dict[str, Any]]:
+    raw_features = payload.get("features")
+    features = raw_features if isinstance(raw_features, list) else []
+    safe_limit = min(1000, max(1, int(feature_limit)))
+    safe_batch_size = min(
+        _MAX_DATASET_BATCH_SIZE,
+        max(1, int(batch_size)),
+    )
+    capped_features = features[:safe_limit]
+    total_available = len(capped_features)
+    safe_offset = min(safe_limit, max(0, int(offset)))
+    page_end = min(total_available, safe_offset + safe_batch_size)
+    page_features = deepcopy(capped_features[safe_offset:page_end])
+    has_more = page_end < total_available
+
+    page_payload = dict(payload)
+    page_payload["type"] = "FeatureCollection"
+    page_payload["features"] = page_features
+    page_payload["numberReturned"] = len(page_features)
+
+    return page_payload, {
+        "offset": safe_offset,
+        "batch_size": safe_batch_size,
+        "returned": len(page_features),
+        "total_available": total_available,
+        "has_more": has_more,
+        "next_offset": page_end if has_more else None,
+    }
+
+
 
 def _normalize_public_dataset_item(
     item: Mapping[str, Any],
@@ -470,7 +618,7 @@ def _normalize_public_dataset_item(
             "format": _safe_str(source.get("format"), "").strip(),
             "url": _safe_str(source.get("url"), "").strip(),
             "available": _safe_bool(source.get("available"), False),
-            "max_features": _safe_int(source.get("max_features"), 0),
+            "max_features": _configured_dataset_feature_limit(),
         },
         "capabilities": {
             "read": _safe_bool(capabilities.get("read"), True),
@@ -787,6 +935,81 @@ def list_datasets() -> Response:
         )
 
 
+@bp.route("/api/datasets/<string:dataset_id>", methods=["GET", "HEAD"])
+def dataset_detail(dataset_id: str) -> Response:
+    """Liefert einen einzelnen Datensatz samt aktuellem OpenLayers-Style."""
+    try:
+        settings = _settings()
+        if not _safe_bool(getattr(settings, "dataset_api_enabled", False), False):
+            return _json_error(503, "dataset api disabled")
+
+        include_style_contract = _query_bool("include_style_contract", True)
+        include_style_payload = _query_bool("include_style_payload", False)
+        include_internal = _query_bool("include_internal", False)
+        enrich_with_db = _query_bool("enrich_with_db", False)
+        refresh = _query_bool("refresh", False)
+        use_cache = not refresh
+
+        catalog_service = _get_dataset_catalog_service()
+        raw_item = catalog_service.get_dataset_dict(
+            dataset_id,
+            include_style_details=True,
+            enrich_with_db=enrich_with_db,
+            include_internal=include_internal,
+            include_style_payload=include_style_payload,
+            use_cache=use_cache,
+        )
+        item = _normalize_public_dataset_item(raw_item, include_internal=include_internal)
+
+        if include_style_contract:
+            item["style_contract"] = _get_style_adapter().get_dataset_style_dict(
+                dataset_id,
+                use_cache=use_cache,
+                include_rules=True,
+                include_raw_style=include_style_payload,
+                enrich_with_db=enrich_with_db,
+            )
+
+        item["refresh"] = refresh
+        if request.method == "HEAD":
+            return _json(
+                {
+                    "status": "ok",
+                    "dataset_id": item.get("dataset_id", dataset_id),
+                    "style_available": bool(item.get("style_contract")),
+                },
+                200,
+            )
+        return _json(item, 200)
+
+    except OpenLayerDatasetNotFoundError:
+        return _json_error(404, "dataset not found", extra={"dataset_id": dataset_id})
+    except OpenLayerDatasetCatalogError as exc:
+        status_code = int(getattr(exc, "status_code", 502) or 502)
+        return _json_error(
+            status_code,
+            "dataset detail unavailable",
+            detail=exc.__class__.__name__,
+            extra={"dataset_id": dataset_id},
+        )
+    except OpenLayerStyleAdapterError as exc:
+        status_code = int(getattr(exc, "status_code", 502) or 502)
+        return _json_error(
+            status_code,
+            "dataset style unavailable",
+            detail=exc.__class__.__name__,
+            extra={"dataset_id": dataset_id},
+        )
+    except Exception as exc:
+        _log_exception("dataset_detail failed", exc)
+        return _json_error(
+            500,
+            "dataset detail route failed",
+            detail=exc.__class__.__name__,
+            extra={"dataset_id": dataset_id},
+        )
+
+
 @bp.route("/api/datasets/<string:dataset_id>/source", methods=["GET", "HEAD"])
 def dataset_source(dataset_id: str) -> Response:
     """
@@ -812,34 +1035,73 @@ def dataset_source(dataset_id: str) -> Response:
 
         refresh = _query_bool("refresh", False)
         use_cache = not refresh
+        requested_bbox = _query_bbox(required=False)
+        center = _location_center(requested_bbox)
+        radius_meters = _configured_dataset_radius_meters()
+        bbox = _bbox_for_location_radius(center, radius_meters)
+        bbox_crs = "CRS:84"
+        min_load_zoom = max(0, _safe_int(getattr(settings, "dataset_min_load_zoom", 14), 14))
+        requested_zoom = _query_float("zoom", float(min_load_zoom))
+        feature_limit = _configured_dataset_feature_limit()
+        batch_size = min(
+            _MAX_DATASET_BATCH_SIZE,
+            max(1, _query_int("batch_size", _DEFAULT_DATASET_BATCH_SIZE)),
+        )
+        batch_offset = min(
+            feature_limit, max(0, _query_int("offset", 0))
+        )
+
+        if requested_zoom < min_load_zoom:
+            empty_payload = {
+                "type": "FeatureCollection",
+                "features": [],
+                "numberReturned": 0,
+            }
+            if request.method == "HEAD":
+                return _json(
+                    {
+                        "status": "zoom_too_low",
+                        "dataset_id": dataset_id,
+                        "feature_count": 0,
+                        "feature_limit": feature_limit,
+                        "min_load_zoom": min_load_zoom,
+                        "batch_size": batch_size,
+                        "offset": batch_offset,
+                        "has_more": False,
+                    },
+                    200,
+                )
+            return _json_geojson(
+                empty_payload,
+                200,
+                extra_headers={
+                    "X-OpenLayer-Dataset-Id": dataset_id,
+                    "X-OpenLayer-Feature-Count": "0",
+                    "X-OpenLayer-Feature-Limit": str(feature_limit),
+                    "X-OpenLayer-Center": ",".join(format(value, ".9g") for value in center),
+                    "X-OpenLayer-Radius-Meters": str(radius_meters),
+                    "X-OpenLayer-Bbox": ",".join(format(value, ".9g") for value in bbox),
+                    "X-OpenLayer-Min-Load-Zoom": str(min_load_zoom),
+                    "X-OpenLayer-Zoom-Too-Low": "true",
+                    "X-OpenLayer-Batch-Offset": str(batch_offset),
+                    "X-OpenLayer-Batch-Size": str(batch_size),
+                    "X-OpenLayer-Total-Available": "0",
+                    "X-OpenLayer-Has-More": "false",
+                    "X-OpenLayer-Next-Offset": "",
+                    "X-OpenLayer-Progressive": "true",
+                },
+            )
 
         source_service = _get_dataset_source_service()
         result = source_service.get_dataset_source(
             dataset_id,
             use_cache=use_cache,
+            bbox=bbox,
+            bbox_crs=bbox_crs,
+            circle_center=center,
+            circle_radius_m=radius_meters,
+            feature_limit=feature_limit,
         )
-
-        extra_headers = {
-            "X-OpenLayer-Dataset-Id": result.dataset_id,
-            "X-OpenLayer-Source-Provider": result.provider,
-            "X-OpenLayer-Feature-Count": str(result.feature_count),
-            "X-OpenLayer-Feature-Limit": str(result.feature_limit or 0),
-            "X-OpenLayer-Trimmed": "true" if result.trimmed else "false",
-            "X-OpenLayer-From-Cache": "true" if result.from_cache else "false",
-            "X-OpenLayer-Stale-Cache": "true" if result.stale_cache_used else "false",
-        }
-
-        if request.method == "HEAD":
-            return _json(
-                {
-                    "status": "ok",
-                    "dataset_id": result.dataset_id,
-                    "feature_count": result.feature_count,
-                    "feature_limit": result.feature_limit,
-                    "trimmed": result.trimmed,
-                },
-                200,
-            )
 
         if not isinstance(result.payload, Mapping):
             return _json(
@@ -852,10 +1114,65 @@ def dataset_source(dataset_id: str) -> Response:
                 500,
             )
 
-        return _json_geojson(
+        page_payload, paging = _paginate_feature_collection(
             result.payload,
+            offset=batch_offset,
+            batch_size=batch_size,
+            feature_limit=feature_limit,
+        )
+
+        extra_headers = {
+            "X-OpenLayer-Dataset-Id": result.dataset_id,
+            "X-OpenLayer-Source-Provider": result.provider,
+            "X-OpenLayer-Feature-Count": str(paging["returned"]),
+            "X-OpenLayer-Feature-Limit": str(result.feature_limit or feature_limit),
+            "X-OpenLayer-Trimmed": "true" if result.trimmed else "false",
+            "X-OpenLayer-From-Cache": "true" if result.from_cache else "false",
+            "X-OpenLayer-Stale-Cache": "true" if result.stale_cache_used else "false",
+            "X-OpenLayer-Min-Load-Zoom": str(min_load_zoom),
+            "X-OpenLayer-Zoom-Too-Low": "false",
+            "X-OpenLayer-Center": ",".join(format(value, ".9g") for value in center),
+            "X-OpenLayer-Radius-Meters": str(radius_meters),
+            "X-OpenLayer-Bbox": ",".join(format(value, ".9g") for value in bbox or ()),
+            "X-OpenLayer-Batch-Offset": str(paging["offset"]),
+            "X-OpenLayer-Batch-Size": str(paging["batch_size"]),
+            "X-OpenLayer-Total-Available": str(paging["total_available"]),
+            "X-OpenLayer-Has-More": "true" if paging["has_more"] else "false",
+            "X-OpenLayer-Next-Offset": "" if paging["next_offset"] is None else str(paging["next_offset"]),
+            "X-OpenLayer-Progressive": "true",
+        }
+
+        if request.method == "HEAD":
+            return _json(
+                {
+                    "status": "ok",
+                    "dataset_id": result.dataset_id,
+                    "feature_count": paging["returned"],
+                    "total_available": paging["total_available"],
+                    "feature_limit": result.feature_limit,
+                    "batch_size": paging["batch_size"],
+                    "offset": paging["offset"],
+                    "next_offset": paging["next_offset"],
+                    "has_more": paging["has_more"],
+                    "center": center,
+                    "radius_meters": radius_meters,
+                    "trimmed": result.trimmed,
+                },
+                200,
+            )
+
+        return _json_geojson(
+            page_payload,
             200,
             extra_headers=extra_headers,
+        )
+
+    except ValueError as exc:
+        return _json_error(
+            400,
+            "invalid dataset source request",
+            detail=str(exc),
+            extra={"dataset_id": dataset_id},
         )
 
     except OpenLayerDatasetNotFoundError as exc:
@@ -907,6 +1224,131 @@ def dataset_source(dataset_id: str) -> Response:
         )
 
 
+
+@bp.route("/api/datasets/<string:dataset_id>/export", methods=["GET"])
+def dataset_export(dataset_id: str) -> Response:
+    """Exports the selected dataset for the current map coordinate/viewport."""
+    try:
+        settings = _settings()
+        if not _safe_bool(getattr(settings, "dataset_api_enabled", False), False):
+            return _json_error(503, "dataset api disabled", extra={"dataset_id": dataset_id})
+        if not _safe_bool(getattr(settings, "dataset_export_enabled", True), True):
+            return _json_error(503, "dataset export disabled", extra={"dataset_id": dataset_id})
+
+        export_format = _query_text("format", "").lower()
+        if export_format not in {"dxf", "dwg", "pdf"}:
+            raise ValueError("format must be dxf, dwg or pdf")
+
+        min_load_zoom = max(0, _safe_int(getattr(settings, "dataset_min_load_zoom", 14), 14))
+        requested_zoom = _query_float("zoom", float(min_load_zoom))
+        if requested_zoom < min_load_zoom:
+            raise ValueError(f"downloads require zoom level {min_load_zoom} or higher")
+
+        center = _location_center(None)
+        radius_meters = _configured_dataset_radius_meters()
+
+        scale: Optional[int] = None
+        if export_format == "pdf":
+            scale = _query_int("scale", 0)
+            if scale not in {100, 1000}:
+                raise ValueError("PDF scale must be 100 or 1000")
+            bbox = pdf_bbox_for_scale(center, scale)
+        else:
+            bbox = _bbox_for_location_radius(center, radius_meters)
+
+        feature_limit = _configured_dataset_feature_limit()
+        source_result = _get_dataset_source_service().get_dataset_source(
+            dataset_id,
+            use_cache=True,
+            bbox=bbox,
+            bbox_crs="CRS:84",
+            circle_center=center,
+            circle_radius_m=radius_meters,
+            feature_limit=feature_limit,
+        )
+        if not isinstance(source_result.payload, Mapping):
+            return _json_error(
+                500,
+                "dataset export source payload missing",
+                extra={"dataset_id": dataset_id},
+            )
+
+        dataset = _get_dataset_catalog_service().get_dataset_dict(
+            dataset_id,
+            include_style_details=False,
+            include_style_payload=False,
+            include_internal=False,
+            use_cache=True,
+        )
+        dataset_title = _safe_str(dataset.get("title"), "").strip() or dataset_id
+        artifact = build_export_artifact(
+            export_format=export_format,
+            dataset_id=dataset_id,
+            dataset_title=dataset_title,
+            payload=source_result.payload,
+            center=center,
+            scale=scale,
+            dwg_converter_command=_safe_str(
+                getattr(settings, "dwg_converter_command", "dxf2dwg"),
+                "dxf2dwg",
+            ),
+        )
+
+        response = make_response(artifact.content, 200)
+        response.headers["Content-Type"] = artifact.content_type
+        response.headers["Content-Disposition"] = f'attachment; filename="{artifact.filename}"'
+        response.headers["Content-Length"] = str(len(artifact.content))
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-OpenLayer-Dataset-Id"] = source_result.dataset_id
+        response.headers["X-OpenLayer-Feature-Count"] = str(source_result.feature_count)
+        response.headers["X-OpenLayer-Feature-Limit"] = str(source_result.feature_limit or feature_limit)
+        response.headers["X-OpenLayer-Export-Format"] = export_format
+        response.headers["X-OpenLayer-Center"] = ",".join(format(value, ".9g") for value in center)
+        response.headers["X-OpenLayer-Radius-Meters"] = str(radius_meters)
+        response.headers["X-OpenLayer-Bbox"] = ",".join(format(value, ".9g") for value in bbox or ())
+        if scale is not None:
+            response.headers["X-OpenLayer-Pdf-Scale"] = str(scale)
+        return response
+
+    except ValueError as exc:
+        return _json_error(
+            400,
+            "invalid dataset export request",
+            detail=str(exc),
+            extra={"dataset_id": dataset_id},
+        )
+    except ExportUnavailableError as exc:
+        return _json_error(
+            503,
+            "dataset export backend unavailable",
+            detail=str(exc),
+            extra={"dataset_id": dataset_id},
+        )
+    except OpenLayerDatasetNotFoundError:
+        return _json_error(404, "dataset not found", extra={"dataset_id": dataset_id})
+    except OpenLayerDatasetSourceUnavailableError as exc:
+        return _json_error(
+            404,
+            "dataset source unavailable",
+            detail=str(exc),
+            extra={"dataset_id": dataset_id},
+        )
+    except OpenLayerDatasetSourceError as exc:
+        status_code = exc.status_code if isinstance(exc.status_code, int) and exc.status_code > 0 else 500
+        return _json_error(
+            status_code,
+            "dataset export source failed",
+            detail=str(exc),
+            extra={"dataset_id": dataset_id},
+        )
+    except Exception as exc:
+        _log_exception("dataset_export failed", exc)
+        return _json_error(
+            500,
+            "dataset export failed",
+            detail=exc.__class__.__name__,
+            extra={"dataset_id": dataset_id},
+        )
 @bp.route("/api/datasets/<string:dataset_id>/changes", methods=["POST"])
 def dataset_changes(dataset_id: str) -> Response:
     """

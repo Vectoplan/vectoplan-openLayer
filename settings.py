@@ -54,11 +54,16 @@ DEFAULT_OPENLAYER_X_FRAME_OPTIONS_DEFAULT = "SAMEORIGIN"
 
 DEFAULT_LON = 11.576124
 DEFAULT_LAT = 48.137154
-DEFAULT_ZOOM = 14
+DEFAULT_ZOOM = 17
 DEFAULT_MIN_ZOOM = 0
 DEFAULT_MAX_ZOOM = 22
-DEFAULT_MAPBOX_STYLE = "mapbox/satellite-streets-v12"
+DEFAULT_MAPBOX_STYLE = "mapbox/light-v11"
 DEFAULT_TILE_SIZE = 512
+DEFAULT_DATASET_MIN_LOAD_ZOOM = 14
+DEFAULT_DATASET_FEATURE_LIMIT = 1000
+DEFAULT_DATASET_RADIUS_METERS = 400
+DEFAULT_DATASET_EXPORT_ENABLED = True
+DEFAULT_DWG_CONVERTER_COMMAND = "dxf2dwg"
 
 DEFAULT_ALLOWED_ORIGINS = ("*",)
 
@@ -129,6 +134,11 @@ class Settings:
     editor_enabled: bool
     dataset_catalog_path: Path
     geoserver_orchestrator_url: str
+    dataset_min_load_zoom: int = DEFAULT_DATASET_MIN_LOAD_ZOOM
+    dataset_feature_limit: int = DEFAULT_DATASET_FEATURE_LIMIT
+    dataset_radius_meters: int = DEFAULT_DATASET_RADIUS_METERS
+    dataset_export_enabled: bool = DEFAULT_DATASET_EXPORT_ENABLED
+    dwg_converter_command: str = DEFAULT_DWG_CONVERTER_COMMAND
 
     required_files: tuple[str, ...] = field(default_factory=tuple)
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -243,6 +253,12 @@ class Settings:
             "EDITOR_ENABLED": self.editor_enabled,
             "DATASET_CATALOG_PATH": str(self.dataset_catalog_path),
             "GEOSERVER_ORCHESTRATOR_URL": self.geoserver_orchestrator_url,
+            "DATASET_MIN_LOAD_ZOOM": self.dataset_min_load_zoom,
+            "DATASET_WFS_FEATURE_LIMIT": self.dataset_feature_limit,
+            "GEOSERVER_ORCHESTRATOR_WFS_FEATURE_LIMIT": self.dataset_feature_limit,
+            "DATASET_RADIUS_METERS": self.dataset_radius_meters,
+            "DATASET_EXPORT_ENABLED": self.dataset_export_enabled,
+            "OPENLAYER_DWG_CONVERTER": self.dwg_converter_command,
             "SERVICE_ROOT": str(self.service_root),
             "ENV_FILE": str(self.env_file),
             "TEMPLATES_DIR": str(self.templates_dir),
@@ -296,6 +312,10 @@ class Settings:
             "features": {
                 "dataset_api_enabled": self.dataset_api_enabled,
                 "editor_enabled": self.editor_enabled,
+                "dataset_min_load_zoom": self.dataset_min_load_zoom,
+                "dataset_feature_limit": self.dataset_feature_limit,
+                "dataset_radius_meters": self.dataset_radius_meters,
+                "dataset_export_enabled": self.dataset_export_enabled,
             },
             "paths": {
                 "service_root": str(self.service_root),
@@ -1038,7 +1058,7 @@ def get_settings() -> Settings:
         map_enable_wheel_zoom = _parse_bool(
             env,
             ("ENABLE_WHEEL_ZOOM", "MAP_ENABLE_WHEEL_ZOOM"),
-            False,
+            True,
             notes,
         )
         map_disable_scroll = not map_enable_wheel_zoom
@@ -1046,7 +1066,7 @@ def get_settings() -> Settings:
         map_disable_scroll = _parse_bool(
             env,
             ("DISABLE_SCROLL", "MAP_DISABLE_SCROLL"),
-            True,
+            False,
             notes,
         )
         map_enable_wheel_zoom = not map_disable_scroll
@@ -1076,6 +1096,50 @@ def get_settings() -> Settings:
         "GEOSERVER_ORCHESTRATOR_URL",
         "GEOSERVER_ORCHESTRATOR_BASE_URL",
     ) or ""
+
+    dataset_min_load_zoom = _parse_int(
+        env,
+        ("DATASET_MIN_LOAD_ZOOM", "OPENLAYER_DATASET_MIN_LOAD_ZOOM"),
+        DEFAULT_DATASET_MIN_LOAD_ZOOM,
+        notes,
+        minimum=0,
+        maximum=22,
+    )
+    dataset_min_load_zoom = min(max(dataset_min_load_zoom, map_min_zoom), map_max_zoom)
+
+    dataset_feature_limit = _parse_int(
+        env,
+        (
+            "DATASET_WFS_FEATURE_LIMIT",
+            "GEOSERVER_ORCHESTRATOR_WFS_FEATURE_LIMIT",
+            "ORCHESTRATOR_WFS_FEATURE_LIMIT",
+        ),
+        DEFAULT_DATASET_FEATURE_LIMIT,
+        notes,
+        minimum=1,
+        maximum=DEFAULT_DATASET_FEATURE_LIMIT,
+    )
+
+    dataset_radius_meters = _parse_int(
+        env,
+        ("DATASET_RADIUS_METERS", "OPENLAYER_DATASET_RADIUS_METERS"),
+        DEFAULT_DATASET_RADIUS_METERS,
+        notes,
+        minimum=1,
+        maximum=DEFAULT_DATASET_RADIUS_METERS,
+    )
+
+    dataset_export_enabled = _parse_bool(
+        env,
+        ("DATASET_EXPORT_ENABLED", "OPENLAYER_DATASET_EXPORT_ENABLED"),
+        DEFAULT_DATASET_EXPORT_ENABLED,
+        notes,
+    )
+
+    dwg_converter_command = (
+        _first_non_blank(env, "OPENLAYER_DWG_CONVERTER", "DXF2DWG_COMMAND")
+        or DEFAULT_DWG_CONVERTER_COMMAND
+    )
 
     required_files = _required_files_default()
 
@@ -1118,6 +1182,11 @@ def get_settings() -> Settings:
         editor_enabled=editor_enabled,
         dataset_catalog_path=dataset_catalog_path,
         geoserver_orchestrator_url=geoserver_orchestrator_url,
+        dataset_min_load_zoom=dataset_min_load_zoom,
+        dataset_feature_limit=dataset_feature_limit,
+        dataset_radius_meters=dataset_radius_meters,
+        dataset_export_enabled=dataset_export_enabled,
+        dwg_converter_command=dwg_converter_command,
         required_files=required_files,
         notes=tuple(notes),
     )
