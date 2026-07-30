@@ -452,6 +452,10 @@ def _build_dataset_source_url_template() -> str:
     return "/api/datasets/{dataset_id}/source"
 
 
+def _build_dataset_export_url_template() -> str:
+    return "/api/datasets/{dataset_id}/export"
+
+
 def _build_dataset_style_url_template() -> str:
     """
     Noch keine eigene OpenLayer-Style-Route.
@@ -473,16 +477,21 @@ def _fallback_context() -> dict[str, Any]:
         "mapbox_token": "",
         "lon": 11.576124,
         "lat": 48.137154,
-        "zoom": 14,
+        "zoom": 17,
         "min_zoom": 0,
         "max_zoom": 22,
-        "style_id": "mapbox/satellite-streets-v12",
+        "style_id": "mapbox/light-v11",
         "disable_scroll": False,
         "enable_wheel_zoom": True,
         "scroll_source": "fallback_default",
         "tile_size": 512,
         "dataset_api_enabled": False,
         "editor_enabled": False,
+        "dataset_min_load_zoom": 14,
+        "dataset_feature_limit": 1000,
+        "dataset_radius_meters": 400,
+        "dataset_export_enabled": True,
+        "dataset_export_url_template": "/api/datasets/{dataset_id}/export",
         "datasets_api_url": "/api/datasets?include_style_details=1&include_invalid=0",
         "datasets_api_url_base": "/api/datasets",
         "datasets_api_style_contract_url": "/api/datasets?include_style_details=1&include_style_contract=1&include_invalid=0",
@@ -519,7 +528,7 @@ def _fallback_context() -> dict[str, Any]:
             "show_toolbar": True,
             "show_dataset_button": True,
             "show_editor_button": False,
-            "show_zoom_buttons": True,
+            "show_zoom_buttons": False,
         },
     }
 
@@ -536,11 +545,11 @@ def _build_context(settings: Settings) -> dict[str, Any]:
     try:
         map_default_lon = float(getattr(settings, "map_default_lon", 11.576124))
         map_default_lat = float(getattr(settings, "map_default_lat", 48.137154))
-        map_default_zoom = int(getattr(settings, "map_default_zoom", 14))
+        map_default_zoom = int(getattr(settings, "map_default_zoom", 17))
         map_min_zoom = int(getattr(settings, "map_min_zoom", 0))
         map_max_zoom = int(getattr(settings, "map_max_zoom", 22))
         map_tile_size = int(getattr(settings, "map_tile_size", 512))
-        map_default_style = _safe_str(getattr(settings, "map_default_style", None), "mapbox/satellite-streets-v12")
+        map_default_style = _safe_str(getattr(settings, "map_default_style", None), "mapbox/light-v11")
         map_disable_scroll = _safe_bool(getattr(settings, "map_disable_scroll", False), False)
         map_enable_wheel_zoom = _safe_bool(getattr(settings, "map_enable_wheel_zoom", not map_disable_scroll), True)
 
@@ -580,12 +589,17 @@ def _build_context(settings: Settings) -> dict[str, Any]:
 
         dataset_api_enabled = _safe_bool(getattr(settings, "dataset_api_enabled", False), False)
         editor_enabled = _safe_bool(getattr(settings, "editor_enabled", False), False)
+        dataset_min_load_zoom = _clamp_int(int(getattr(settings, "dataset_min_load_zoom", 14)), map_min_zoom, map_max_zoom)
+        dataset_feature_limit = _clamp_int(int(getattr(settings, "dataset_feature_limit", 1000)), 1, 1000)
+        dataset_radius_meters = _clamp_int(int(getattr(settings, "dataset_radius_meters", 400)), 1, 400)
+        dataset_export_enabled = _safe_bool(getattr(settings, "dataset_export_enabled", True), True)
         geoserver_orchestrator_url = _safe_str(getattr(settings, "geoserver_orchestrator_url", None), "").strip()
 
         datasets_api_url = _build_datasets_api_url(settings)
         datasets_api_style_contract_url = _build_datasets_api_style_contract_url(settings)
         dataset_changes_url_template = _build_dataset_changes_url_template()
         dataset_source_url_template = _build_dataset_source_url_template()
+        dataset_export_url_template = _build_dataset_export_url_template()
         dataset_style_url_template = _build_dataset_style_url_template()
 
         runtime_summary = _build_map_runtime_summary(settings)
@@ -624,11 +638,16 @@ def _build_context(settings: Settings) -> dict[str, Any]:
             # API / Services
             "dataset_api_enabled": dataset_api_enabled,
             "editor_enabled": editor_enabled,
+            "dataset_min_load_zoom": dataset_min_load_zoom,
+            "dataset_feature_limit": dataset_feature_limit,
+            "dataset_radius_meters": dataset_radius_meters,
+            "dataset_export_enabled": dataset_export_enabled,
             "datasets_api_url": datasets_api_url,
             "datasets_api_url_base": _safe_url_for("datasets.list_datasets", "/api/datasets"),
             "datasets_api_style_contract_url": datasets_api_style_contract_url,
             "dataset_changes_url_template": dataset_changes_url_template,
             "dataset_source_url_template": dataset_source_url_template,
+            "dataset_export_url_template": dataset_export_url_template,
             "dataset_style_url_template": dataset_style_url_template,
             "geoserver_orchestrator_url": geoserver_orchestrator_url,
             "orchestrator_configured": bool(geoserver_orchestrator_url),
@@ -650,7 +669,7 @@ def _build_context(settings: Settings) -> dict[str, Any]:
                 "show_toolbar": True,
                 "show_dataset_button": True,
                 "show_editor_button": bool(editor_enabled),
-                "show_zoom_buttons": True,
+                "show_zoom_buttons": False,
             },
 
             # Debug-/Fehlerflags für JS
@@ -679,7 +698,7 @@ def _build_context(settings: Settings) -> dict[str, Any]:
 
         # Versuche Settings-basierte Defaults trotzdem noch zu übernehmen
         try:
-            map_default_style = _safe_str(getattr(settings, "map_default_style", None), "mapbox/satellite-streets-v12")
+            map_default_style = _safe_str(getattr(settings, "map_default_style", None), "mapbox/light-v11")
             mapbox_token = _safe_str(getattr(settings, "mapbox_token", None), "")
             token_present = _safe_bool(getattr(settings, "has_mapbox_token", bool(mapbox_token.strip())), bool(mapbox_token.strip()))
 
@@ -696,6 +715,9 @@ def _build_context(settings: Settings) -> dict[str, Any]:
             fallback["enable_wheel_zoom"] = _safe_bool(getattr(settings, "map_enable_wheel_zoom", fallback["enable_wheel_zoom"]), True)
             fallback["dataset_api_enabled"] = _safe_bool(getattr(settings, "dataset_api_enabled", fallback["dataset_api_enabled"]), False)
             fallback["editor_enabled"] = _safe_bool(getattr(settings, "editor_enabled", fallback["editor_enabled"]), False)
+            fallback["dataset_min_load_zoom"] = _clamp_int(int(getattr(settings, "dataset_min_load_zoom", 14)), 0, 22)
+            fallback["dataset_feature_limit"] = _clamp_int(int(getattr(settings, "dataset_feature_limit", 1000)), 1, 1000)
+            fallback["dataset_radius_meters"] = _clamp_int(int(getattr(settings, "dataset_radius_meters", 400)), 1, 400)
             fallback["datasets_api_url"] = _build_datasets_api_url(settings)
             fallback["datasets_api_url_base"] = _safe_url_for("datasets.list_datasets", "/api/datasets")
             fallback["datasets_api_style_contract_url"] = _build_datasets_api_style_contract_url(settings)
@@ -734,7 +756,7 @@ def _build_context(settings: Settings) -> dict[str, Any]:
                 "show_toolbar": True,
                 "show_dataset_button": True,
                 "show_editor_button": bool(fallback["editor_enabled"]),
-                "show_zoom_buttons": True,
+                "show_zoom_buttons": False,
             }
         except Exception:
             pass

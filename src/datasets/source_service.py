@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -84,6 +85,9 @@ _DEFAULT_MAX_PAYLOAD_BYTES = 12 * 1024 * 1024  # 12 MB
 _DEFAULT_ALLOW_STALE_ON_ERROR = True
 _DEFAULT_ACCEPT_HEADER = "application/geo+json, application/json, text/json;q=0.9, */*;q=0.8"
 _DEFAULT_USER_AGENT = "openlayer-dataset-source-service/1.0"
+_MAX_FEATURE_LIMIT = 1000
+_MAX_DATASET_RADIUS_METERS = 400.0
+_MAX_SOURCE_CACHE_ENTRIES = 128
 
 _DEFAULT_GEOSERVER_INTERNAL_BASE_URL = "http://geoserver:8080/geoserver"
 _DEFAULT_GEOSERVER_PUBLIC_BASE_URL = "http://localhost:8082/geoserver"
@@ -356,6 +360,10 @@ class OpenLayerDatasetSourcePayloadError(OpenLayerDatasetSourceError):
     pass
 
 
+class OpenLayerDatasetSourcePayloadTooLargeError(OpenLayerDatasetSourceError):
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -584,6 +592,11 @@ class OpenLayerDatasetSourceService:
         dataset_id: str,
         *,
         use_cache: bool = True,
+        bbox: Optional[Sequence[float]] = None,
+        bbox_crs: str = "EPSG:4326",
+        circle_center: Optional[Sequence[float]] = None,
+        circle_radius_m: Optional[float] = None,
+        feature_limit: Optional[int] = None,
     ) -> OpenLayerDatasetSourceResult:
         normalized_dataset_id = self._sanitize_dataset_id(dataset_id)
         if not normalized_dataset_id:
@@ -594,10 +607,32 @@ class OpenLayerDatasetSourceService:
 
         dataset_entry = self._get_dataset_entry(normalized_dataset_id, use_cache=use_cache)
         source_descriptor = self._resolve_source_descriptor(dataset_entry)
+        normalized_bbox = self._normalize_bbox(bbox)
+        normalized_bbox_crs = self._normalize_bbox_crs(bbox_crs)
+        normalized_circle_center = self._normalize_circle_center(circle_center)
+        normalized_circle_radius = self._normalize_circle_radius(circle_radius_m)
+        if (normalized_circle_center is None) != (normalized_circle_radius is None):
+            raise OpenLayerDatasetSourceError(
+                "circle_center und circle_radius_m muessen gemeinsam angegeben werden.",
+                status_code=400,
+            )
+        descriptor_limit = max(
+            1,
+            _safe_int(source_descriptor.get("feature_limit"), self.feature_limit) or self.feature_limit,
+        )
+        requested_limit = min(
+            _MAX_FEATURE_LIMIT,
+            max(1, _safe_int(feature_limit, descriptor_limit) or descriptor_limit),
+        )
+        source_descriptor["feature_limit"] = requested_limit
 
         cache_key = self._build_source_cache_key(
             dataset_id=normalized_dataset_id,
             source_descriptor=source_descriptor,
+            bbox=normalized_bbox,
+            bbox_crs=normalized_bbox_crs,
+            circle_center=normalized_circle_center,
+            circle_radius_m=normalized_circle_radius,
         )
 
         if self.enable_cache and use_cache:
@@ -615,6 +650,8 @@ class OpenLayerDatasetSourceService:
             url_resolution = self._build_effective_source_url(
                 dataset_id=normalized_dataset_id,
                 source_descriptor=source_descriptor,
+                bbox=normalized_bbox,
+                bbox_crs=normalized_bbox_crs,
             )
             effective_url = _safe_str(url_resolution.get("effective_url"))
             resolved_direct_url = _safe_str(url_resolution.get("direct_url"))
@@ -630,14 +667,28 @@ class OpenLayerDatasetSourceService:
                     },
                 )
 
-            http_result = self._fetch_json_source(
+            http_result = self._fetch_json_source_with_wfs_backoff(
                 dataset_id=normalized_dataset_id,
                 effective_url=effective_url,
+                source_type=source_descriptor["source_type"],
+                feature_limit=source_descriptor["feature_limit"],
+            )
+            effective_url = _safe_str(http_result.get("effective_url"), effective_url) or effective_url
+            effective_feature_limit = max(
+                1,
+                _safe_int(
+                    http_result.get("effective_feature_limit"),
+                    source_descriptor["feature_limit"],
+                )
+                or source_descriptor["feature_limit"],
             )
             normalized_payload, payload_meta = self._normalize_geojson_payload(
                 dataset_id=normalized_dataset_id,
                 payload=http_result["payload"],
-                feature_limit=source_descriptor["feature_limit"],
+                feature_limit=effective_feature_limit,
+                bbox=normalized_bbox,
+                circle_center=normalized_circle_center,
+                circle_radius_m=normalized_circle_radius,
             )
 
             result = OpenLayerDatasetSourceResult(
@@ -651,10 +702,13 @@ class OpenLayerDatasetSourceService:
                 effective_url=effective_url,
                 payload=normalized_payload,
                 payload_type=_safe_str(normalized_payload.get("type"), _GEOJSON_FEATURE_COLLECTION) or _GEOJSON_FEATURE_COLLECTION,
-                feature_limit=source_descriptor["feature_limit"],
+                feature_limit=effective_feature_limit,
                 feature_count_before_trim=_safe_int(payload_meta.get("feature_count_before_trim"), 0) or 0,
                 feature_count_after_trim=_safe_int(payload_meta.get("feature_count_after_trim"), 0) or 0,
-                trimmed=_safe_bool(payload_meta.get("trimmed"), False),
+                trimmed=(
+                    _safe_bool(payload_meta.get("trimmed"), False)
+                    or effective_feature_limit < source_descriptor["feature_limit"]
+                ),
                 status_code=_safe_int(http_result.get("status_code"), 200) or 200,
                 headers=_normalize_mapping(http_result.get("headers")),
                 from_cache=False,
@@ -676,6 +730,16 @@ class OpenLayerDatasetSourceService:
 
             for note in _normalize_list(payload_meta.get("notes")):
                 result.add_note(_safe_str(note) or str(note))
+
+            if effective_feature_limit < source_descriptor["feature_limit"]:
+                result.add_warning(
+                    (
+                        f"Die WFS-Antwort für Dataset '{normalized_dataset_id}' war für "
+                        f"{source_descriptor['feature_limit']} Features zu groß. "
+                        f"Sie wurde automatisch auf {effective_feature_limit} Features "
+                        "pro Kartenausschnitt reduziert."
+                    )
+                )
 
             if result.trimmed:
                 result.add_warning(
@@ -722,8 +786,21 @@ class OpenLayerDatasetSourceService:
         dataset_id: str,
         *,
         use_cache: bool = True,
+        bbox: Optional[Sequence[float]] = None,
+        bbox_crs: str = "EPSG:4326",
+        circle_center: Optional[Sequence[float]] = None,
+        circle_radius_m: Optional[float] = None,
+        feature_limit: Optional[int] = None,
     ) -> Dict[str, Any]:
-        result = self.get_dataset_source(dataset_id, use_cache=use_cache)
+        result = self.get_dataset_source(
+            dataset_id,
+            use_cache=use_cache,
+            bbox=bbox,
+            bbox_crs=bbox_crs,
+            circle_center=circle_center,
+            circle_radius_m=circle_radius_m,
+            feature_limit=feature_limit,
+        )
         payload = result.payload
 
         if not isinstance(payload, Mapping):
@@ -739,8 +816,21 @@ class OpenLayerDatasetSourceService:
         dataset_id: str,
         *,
         use_cache: bool = True,
+        bbox: Optional[Sequence[float]] = None,
+        bbox_crs: str = "EPSG:4326",
+        circle_center: Optional[Sequence[float]] = None,
+        circle_radius_m: Optional[float] = None,
+        feature_limit: Optional[int] = None,
     ) -> Dict[str, Any]:
-        result = self.get_dataset_source(dataset_id, use_cache=use_cache)
+        result = self.get_dataset_source(
+            dataset_id,
+            use_cache=use_cache,
+            bbox=bbox,
+            bbox_crs=bbox_crs,
+            circle_center=circle_center,
+            circle_radius_m=circle_radius_m,
+            feature_limit=feature_limit,
+        )
         return result.to_dict(include_payload=False, include_headers=False)
 
     # ---------------------------------------------------------------------
@@ -793,10 +883,11 @@ class OpenLayerDatasetSourceService:
             or _safe_str(source.get("orchestrator_geojson_url"))
         )
 
-        feature_limit = (
+        feature_limit = min(
+            _MAX_FEATURE_LIMIT,
             _safe_int(source.get("max_features"), None)
             or _safe_int(getattr(self.orchestrator_client, "wfs_feature_limit", None), None)
-            or self.feature_limit
+            or self.feature_limit,
         )
 
         available = _safe_bool(source.get("available"), False)
@@ -826,6 +917,8 @@ class OpenLayerDatasetSourceService:
         *,
         dataset_id: str,
         source_descriptor: Mapping[str, Any],
+        bbox: Optional[Sequence[float]] = None,
+        bbox_crs: str = "EPSG:4326",
     ) -> Dict[str, Any]:
         direct_url = _safe_str(source_descriptor.get("direct_url"))
         public_url = _safe_str(source_descriptor.get("public_url"))
@@ -877,6 +970,16 @@ class OpenLayerDatasetSourceService:
             if limited_url != effective_url:
                 notes.append(f"wfs_feature_limit_applied:{feature_limit}")
             effective_url = limited_url
+
+            if bbox is not None:
+                bounded_url = self._apply_bbox_to_wfs_url(
+                    raw_url=effective_url,
+                    bbox=bbox,
+                    bbox_crs=bbox_crs,
+                )
+                if bounded_url != effective_url:
+                    notes.append("wfs_bbox_applied")
+                effective_url = bounded_url
 
         return {
             "dataset_id": dataset_id,
@@ -1080,6 +1183,64 @@ class OpenLayerDatasetSourceService:
     # Interne HTTP-Fetch-Logik
     # ---------------------------------------------------------------------
 
+    def _fetch_json_source_with_wfs_backoff(
+        self,
+        *,
+        dataset_id: str,
+        effective_url: str,
+        source_type: str,
+        feature_limit: int,
+    ) -> Dict[str, Any]:
+        requested_limit = min(
+            _MAX_FEATURE_LIMIT,
+            max(1, _safe_int(feature_limit, self.feature_limit) or self.feature_limit),
+        )
+        current_limit = requested_limit
+        current_url = effective_url
+        attempted_limits: List[int] = []
+
+        while True:
+            try:
+                result = self._fetch_json_source(
+                    dataset_id=dataset_id,
+                    effective_url=current_url,
+                )
+                result["effective_url"] = current_url
+                result["effective_feature_limit"] = current_limit
+
+                if attempted_limits:
+                    notes = result.setdefault("notes", [])
+                    notes.append(
+                        f"wfs_payload_backoff_applied:{requested_limit}->{current_limit}"
+                    )
+                    notes.append(
+                        "wfs_payload_backoff_attempts:"
+                        + ",".join(str(value) for value in attempted_limits)
+                    )
+
+                return result
+
+            except OpenLayerDatasetSourcePayloadTooLargeError:
+                if _safe_str(source_type, "").lower() != "wfs" or current_limit <= 1:
+                    raise
+
+                attempted_limits.append(current_limit)
+                next_limit = max(1, current_limit // 2)
+                self._log_warning(
+                    (
+                        "WFS-Antwort für dataset_id=%s und %s Features überschreitet "
+                        "das Payload-Limit; neuer Versuch mit %s Features."
+                    ),
+                    dataset_id,
+                    current_limit,
+                    next_limit,
+                )
+                current_limit = next_limit
+                current_url = self._apply_feature_limit_to_wfs_url(
+                    raw_url=current_url,
+                    feature_limit=current_limit,
+                )
+
     def _fetch_json_source(
         self,
         *,
@@ -1203,7 +1364,7 @@ class OpenLayerDatasetSourceService:
             )
 
         if len(raw) > safe_limit:
-            raise OpenLayerDatasetSourceError(
+            raise OpenLayerDatasetSourcePayloadTooLargeError(
                 (
                     f"Die Quellantwort überschreitet das erlaubte Maximum von "
                     f"{safe_limit} Bytes."
@@ -1245,8 +1406,11 @@ class OpenLayerDatasetSourceService:
         dataset_id: str,
         payload: Any,
         feature_limit: int,
+        bbox: Optional[Sequence[float]] = None,
+        circle_center: Optional[Sequence[float]] = None,
+        circle_radius_m: Optional[float] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        limit = max(1, _safe_int(feature_limit, self.feature_limit) or self.feature_limit)
+        limit = min(_MAX_FEATURE_LIMIT, max(1, _safe_int(feature_limit, self.feature_limit) or self.feature_limit))
         notes: List[str] = []
 
         if isinstance(payload, list):
@@ -1260,6 +1424,9 @@ class OpenLayerDatasetSourceService:
                 payload=normalized_payload,
                 feature_limit=limit,
                 notes=notes,
+                bbox=bbox,
+                circle_center=circle_center,
+                circle_radius_m=circle_radius_m,
             )
 
         if not isinstance(payload, Mapping):
@@ -1280,6 +1447,9 @@ class OpenLayerDatasetSourceService:
                 payload=raw_payload,
                 feature_limit=limit,
                 notes=notes,
+                bbox=bbox,
+                circle_center=circle_center,
+                circle_radius_m=circle_radius_m,
             )
 
         if payload_type == _GEOJSON_FEATURE:
@@ -1293,6 +1463,9 @@ class OpenLayerDatasetSourceService:
                 payload=normalized_payload,
                 feature_limit=limit,
                 notes=notes,
+                bbox=bbox,
+                circle_center=circle_center,
+                circle_radius_m=circle_radius_m,
             )
 
         if isinstance(raw_payload.get("features"), list):
@@ -1304,6 +1477,9 @@ class OpenLayerDatasetSourceService:
                 payload=normalized_payload,
                 feature_limit=limit,
                 notes=notes,
+                bbox=bbox,
+                circle_center=circle_center,
+                circle_radius_m=circle_radius_m,
             )
 
         raise OpenLayerDatasetSourcePayloadError(
@@ -1322,6 +1498,9 @@ class OpenLayerDatasetSourceService:
         payload: MutableMapping[str, Any],
         feature_limit: int,
         notes: Optional[List[str]] = None,
+        bbox: Optional[Sequence[float]] = None,
+        circle_center: Optional[Sequence[float]] = None,
+        circle_radius_m: Optional[float] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         normalized_notes = list(notes or [])
 
@@ -1335,10 +1514,34 @@ class OpenLayerDatasetSourceService:
                 },
             )
 
-        feature_count_before_trim = len(features)
+        source_feature_count = len(features)
+        filtered_features = features
+        normalized_bbox = self._normalize_bbox(bbox)
+        if normalized_bbox is not None:
+            filtered_features = [
+                feature for feature in features
+                if self._feature_intersects_bbox(feature, normalized_bbox)
+            ]
+            normalized_notes.append("feature_collection_filtered_by_bbox")
+
+        normalized_circle_center = self._normalize_circle_center(circle_center)
+        normalized_circle_radius = self._normalize_circle_radius(circle_radius_m)
+        if (normalized_circle_center is None) != (normalized_circle_radius is None):
+            raise OpenLayerDatasetSourceError(
+                "circle_center und circle_radius_m muessen gemeinsam angegeben werden.",
+                status_code=400,
+            )
+        if normalized_circle_center is not None and normalized_circle_radius is not None:
+            filtered_features = [
+                feature for feature in filtered_features
+                if self._feature_intersects_circle(feature, normalized_circle_center, normalized_circle_radius)
+            ]
+            normalized_notes.append("feature_collection_filtered_by_circle")
+
+        feature_count_before_trim = len(filtered_features)
         trimmed = feature_count_before_trim > feature_limit
 
-        trimmed_features = [_deepcopy_or_value(item) for item in features[:feature_limit]]
+        trimmed_features = [_deepcopy_or_value(item) for item in filtered_features[:feature_limit]]
         normalized_payload = deepcopy(payload)
         normalized_payload["type"] = _GEOJSON_FEATURE_COLLECTION
         normalized_payload["features"] = trimmed_features
@@ -1352,6 +1555,7 @@ class OpenLayerDatasetSourceService:
             )
 
         meta = {
+            "source_feature_count": source_feature_count,
             "feature_count_before_trim": feature_count_before_trim,
             "feature_count_after_trim": len(trimmed_features),
             "trimmed": trimmed,
@@ -1360,6 +1564,210 @@ class OpenLayerDatasetSourceService:
 
         return normalized_payload, meta
 
+    def _feature_intersects_bbox(
+        self,
+        feature: Any,
+        bbox: Tuple[float, float, float, float],
+    ) -> bool:
+        if not isinstance(feature, Mapping):
+            return False
+        geometry = feature.get("geometry")
+        if not isinstance(geometry, Mapping):
+            return False
+
+        points: List[Tuple[float, float]] = []
+
+        def collect_coordinates(value: Any) -> None:
+            if not isinstance(value, (list, tuple)):
+                return
+            if len(value) >= 2 and not isinstance(value[0], (list, tuple)):
+                try:
+                    x_value = float(value[0])
+                    y_value = float(value[1])
+                except (TypeError, ValueError):
+                    return
+                if math.isfinite(x_value) and math.isfinite(y_value):
+                    points.append((x_value, y_value))
+                return
+            for child in value:
+                collect_coordinates(child)
+
+        def collect_geometry(raw_geometry: Any) -> None:
+            if not isinstance(raw_geometry, Mapping):
+                return
+            if str(raw_geometry.get("type", "")).lower() == "geometrycollection":
+                for child_geometry in raw_geometry.get("geometries", []):
+                    collect_geometry(child_geometry)
+                return
+            collect_coordinates(raw_geometry.get("coordinates"))
+
+        collect_geometry(geometry)
+        if not points:
+            return False
+
+        geom_min_x = min(point[0] for point in points)
+        geom_min_y = min(point[1] for point in points)
+        geom_max_x = max(point[0] for point in points)
+        geom_max_y = max(point[1] for point in points)
+        return not (
+            geom_max_x < bbox[0]
+            or geom_min_x > bbox[2]
+            or geom_max_y < bbox[1]
+            or geom_min_y > bbox[3]
+        )
+
+    def _normalize_circle_center(
+        self,
+        center: Optional[Sequence[float]],
+    ) -> Optional[Tuple[float, float]]:
+        if center is None:
+            return None
+        if isinstance(center, (str, bytes)) or len(center) != 2:
+            raise OpenLayerDatasetSourceError(
+                "circle_center muss aus lon und lat bestehen.",
+                status_code=400,
+            )
+        try:
+            values = (float(center[0]), float(center[1]))
+        except (TypeError, ValueError) as exc:
+            raise OpenLayerDatasetSourceError(
+                "circle_center enthaelt ungueltige Koordinaten.",
+                original_exception=exc,
+                status_code=400,
+            ) from exc
+        if not all(math.isfinite(value) for value in values):
+            raise OpenLayerDatasetSourceError(
+                "circle_center enthaelt keine endlichen Koordinaten.",
+                status_code=400,
+            )
+        if values[0] < -180 or values[0] > 180 or values[1] < -90 or values[1] > 90:
+            raise OpenLayerDatasetSourceError(
+                "circle_center liegt ausserhalb von EPSG:4326.",
+                status_code=400,
+            )
+        return values
+
+    def _normalize_circle_radius(self, radius_m: Optional[float]) -> Optional[float]:
+        if radius_m is None:
+            return None
+        try:
+            value = float(radius_m)
+        except (TypeError, ValueError) as exc:
+            raise OpenLayerDatasetSourceError(
+                "circle_radius_m ist ungueltig.",
+                original_exception=exc,
+                status_code=400,
+            ) from exc
+        if not math.isfinite(value) or value <= 0:
+            raise OpenLayerDatasetSourceError(
+                "circle_radius_m muss groesser als 0 sein.",
+                status_code=400,
+            )
+        return min(value, _MAX_DATASET_RADIUS_METERS)
+
+    def _feature_intersects_circle(
+        self,
+        feature: Any,
+        center: Tuple[float, float],
+        radius_m: float,
+    ) -> bool:
+        if not isinstance(feature, Mapping):
+            return False
+        geometry = feature.get("geometry")
+        if not isinstance(geometry, Mapping):
+            return False
+
+        center_lon, center_lat = center
+        earth_radius = 6_378_137.0
+        longitude_scale = math.cos(math.radians(center_lat))
+        radius_squared = radius_m * radius_m
+
+        def to_local(raw_point: Any) -> Optional[Tuple[float, float]]:
+            if not isinstance(raw_point, (list, tuple)) or len(raw_point) < 2:
+                return None
+            try:
+                lon = float(raw_point[0])
+                lat = float(raw_point[1])
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(lon) or not math.isfinite(lat):
+                return None
+            return (
+                math.radians(lon - center_lon) * earth_radius * longitude_scale,
+                math.radians(lat - center_lat) * earth_radius,
+            )
+
+        def point_inside(raw_point: Any) -> bool:
+            local = to_local(raw_point)
+            return bool(local and local[0] * local[0] + local[1] * local[1] <= radius_squared)
+
+        def line_intersects(raw_line: Any) -> bool:
+            if not isinstance(raw_line, (list, tuple)):
+                return False
+            points = [point for point in (to_local(item) for item in raw_line) if point is not None]
+            if any(x * x + y * y <= radius_squared for x, y in points):
+                return True
+            for start, end in zip(points, points[1:]):
+                dx = end[0] - start[0]
+                dy = end[1] - start[1]
+                denominator = dx * dx + dy * dy
+                if denominator <= 0:
+                    continue
+                factor = max(0.0, min(1.0, -(start[0] * dx + start[1] * dy) / denominator))
+                closest_x = start[0] + factor * dx
+                closest_y = start[1] + factor * dy
+                if closest_x * closest_x + closest_y * closest_y <= radius_squared:
+                    return True
+            return False
+
+        def point_in_ring(raw_ring: Any) -> bool:
+            if not isinstance(raw_ring, (list, tuple)):
+                return False
+            points = [point for point in (to_local(item) for item in raw_ring) if point is not None]
+            if len(points) < 3:
+                return False
+            inside = False
+            previous = points[-1]
+            for current in points:
+                if (current[1] > 0) != (previous[1] > 0):
+                    crossing_x = current[0] + (previous[0] - current[0]) * (-current[1]) / (previous[1] - current[1])
+                    if crossing_x > 0:
+                        inside = not inside
+                previous = current
+            return inside
+
+        def polygon_intersects(raw_polygon: Any) -> bool:
+            if not isinstance(raw_polygon, (list, tuple)) or not raw_polygon:
+                return False
+            if any(line_intersects(ring) for ring in raw_polygon):
+                return True
+            return point_in_ring(raw_polygon[0]) and not any(
+                point_in_ring(hole) for hole in raw_polygon[1:]
+            )
+
+        def geometry_intersects(raw_geometry: Any) -> bool:
+            if not isinstance(raw_geometry, Mapping):
+                return False
+            geometry_type = str(raw_geometry.get("type", "")).lower()
+            coordinates = raw_geometry.get("coordinates")
+            if geometry_type == "point":
+                return point_inside(coordinates)
+            if geometry_type == "multipoint":
+                return isinstance(coordinates, (list, tuple)) and any(point_inside(point) for point in coordinates)
+            if geometry_type == "linestring":
+                return line_intersects(coordinates)
+            if geometry_type == "multilinestring":
+                return isinstance(coordinates, (list, tuple)) and any(line_intersects(line) for line in coordinates)
+            if geometry_type == "polygon":
+                return polygon_intersects(coordinates)
+            if geometry_type == "multipolygon":
+                return isinstance(coordinates, (list, tuple)) and any(polygon_intersects(polygon) for polygon in coordinates)
+            if geometry_type == "geometrycollection":
+                geometries = raw_geometry.get("geometries")
+                return isinstance(geometries, (list, tuple)) and any(geometry_intersects(item) for item in geometries)
+            return False
+
+        return geometry_intersects(geometry)
     # ---------------------------------------------------------------------
     # Interne WFS-Schutzlogik
     # ---------------------------------------------------------------------
@@ -1376,7 +1784,7 @@ class OpenLayerDatasetSourceService:
                 "Die WFS-URL ist leer."
             )
 
-        safe_limit = max(1, _safe_int(feature_limit, self.feature_limit) or self.feature_limit)
+        safe_limit = min(_MAX_FEATURE_LIMIT, max(1, _safe_int(feature_limit, self.feature_limit) or self.feature_limit))
 
         try:
             split_result = urlsplit(normalized_raw_url)
@@ -1398,19 +1806,7 @@ class OpenLayerDatasetSourceService:
             if not is_get_feature_like:
                 return normalized_raw_url
 
-            existing_limit = None
-            for key_name in ("count", "maxfeatures"):
-                raw_value = lowered_map.get(key_name)
-                if raw_value is None:
-                    continue
-                parsed = _safe_int(raw_value, None)
-                if parsed is not None and parsed > 0:
-                    existing_limit = parsed
-                    break
-
             effective_limit = safe_limit
-            if existing_limit is not None:
-                effective_limit = min(existing_limit, safe_limit)
 
             filtered_pairs: List[Tuple[str, str]] = []
             for key, value in query_pairs:
@@ -1438,6 +1834,91 @@ class OpenLayerDatasetSourceService:
                 original_exception=exc,
             ) from exc
 
+    def _normalize_bbox(
+        self,
+        bbox: Optional[Sequence[float]],
+    ) -> Optional[Tuple[float, float, float, float]]:
+        if bbox is None:
+            return None
+        if isinstance(bbox, (str, bytes)) or len(bbox) != 4:
+            raise OpenLayerDatasetSourceError(
+                "bbox muss aus genau vier Koordinaten bestehen.",
+                details={"bbox": bbox},
+                status_code=400,
+            )
+
+        try:
+            values = tuple(float(value) for value in bbox)
+        except (TypeError, ValueError) as exc:
+            raise OpenLayerDatasetSourceError(
+                "bbox enthaelt ungueltige Koordinaten.",
+                details={"bbox": bbox},
+                original_exception=exc,
+                status_code=400,
+            ) from exc
+
+        if not all(math.isfinite(value) for value in values):
+            raise OpenLayerDatasetSourceError(
+                "bbox enthaelt keine endlichen Koordinaten.",
+                details={"bbox": values},
+                status_code=400,
+            )
+        if values[0] >= values[2] or values[1] >= values[3]:
+            raise OpenLayerDatasetSourceError(
+                "bbox muss minX,minY,maxX,maxY enthalten.",
+                details={"bbox": values},
+                status_code=400,
+            )
+        return values
+
+    def _normalize_bbox_crs(self, bbox_crs: str) -> str:
+        normalized = (_safe_str(bbox_crs, "EPSG:4326") or "EPSG:4326").upper()
+        if normalized in {"EPSG:4326", "CRS:84"}:
+            return normalized
+        raise OpenLayerDatasetSourceError(
+            "bbox_crs wird nicht unterstuetzt.",
+            details={"bbox_crs": bbox_crs, "supported": ["EPSG:4326", "CRS:84"]},
+            status_code=400,
+        )
+
+    def _apply_bbox_to_wfs_url(
+        self,
+        *,
+        raw_url: str,
+        bbox: Sequence[float],
+        bbox_crs: str,
+    ) -> str:
+        normalized_bbox = self._normalize_bbox(bbox)
+        if normalized_bbox is None:
+            return raw_url
+
+        normalized_crs = self._normalize_bbox_crs(bbox_crs)
+        try:
+            split_result = urlsplit(raw_url)
+            filtered_pairs = [
+                (str(key), str(value))
+                for key, value in parse_qsl(split_result.query, keep_blank_values=True)
+                if str(key).lower() not in {"bbox", "srsname"}
+            ]
+            bbox_value = ",".join(format(value, ".9g") for value in normalized_bbox)
+            filtered_pairs.append(("bbox", f"{bbox_value},{normalized_crs}"))
+            filtered_pairs.append(("srsName", normalized_crs))
+            return urlunsplit(
+                (
+                    split_result.scheme,
+                    split_result.netloc,
+                    split_result.path,
+                    urlencode(filtered_pairs, doseq=True),
+                    split_result.fragment,
+                )
+            )
+        except Exception as exc:
+            raise OpenLayerDatasetSourceError(
+                f"Die WFS-BBOX konnte nicht angewendet werden: {exc}",
+                details={"raw_url": raw_url, "bbox": normalized_bbox, "bbox_crs": normalized_crs},
+                original_exception=exc,
+            ) from exc
+
     # ---------------------------------------------------------------------
     # Interne Cache-Logik
     # ---------------------------------------------------------------------
@@ -1447,9 +1928,17 @@ class OpenLayerDatasetSourceService:
         *,
         dataset_id: str,
         source_descriptor: Mapping[str, Any],
+        bbox: Optional[Tuple[float, float, float, float]] = None,
+        bbox_crs: str = "EPSG:4326",
+        circle_center: Optional[Tuple[float, float]] = None,
+        circle_radius_m: Optional[float] = None,
     ) -> str:
         payload = {
             "dataset_id": dataset_id,
+            "bbox": bbox,
+            "bbox_crs": bbox_crs,
+            "circle_center": circle_center,
+            "circle_radius_m": circle_radius_m,
             "provider": _safe_str(source_descriptor.get("provider")),
             "source_type": _safe_str(source_descriptor.get("source_type")),
             "source_format": _safe_str(source_descriptor.get("source_format")),
@@ -1499,6 +1988,14 @@ class OpenLayerDatasetSourceService:
 
         with self._cache_lock:
             self._source_cache[cache_key] = entry
+            overflow = len(self._source_cache) - _MAX_SOURCE_CACHE_ENTRIES
+            if overflow > 0:
+                oldest_keys = sorted(
+                    self._source_cache,
+                    key=lambda key: self._source_cache[key].cached_at,
+                )[:overflow]
+                for oldest_key in oldest_keys:
+                    self._source_cache.pop(oldest_key, None)
 
     def _get_cache_size(self) -> int:
         with self._cache_lock:
@@ -1637,12 +2134,15 @@ class OpenLayerDatasetSourceService:
         settings: Settings,
     ) -> int:
         if explicit_value is not None:
-            return max(1, _safe_int(explicit_value, getattr(self.orchestrator_client, "wfs_feature_limit", 100)) or 100)
+            return min(
+                _MAX_FEATURE_LIMIT,
+                max(1, _safe_int(explicit_value, getattr(self.orchestrator_client, "wfs_feature_limit", _MAX_FEATURE_LIMIT)) or _MAX_FEATURE_LIMIT),
+            )
 
         try:
             client_limit = _safe_int(getattr(self.orchestrator_client, "wfs_feature_limit", None), None)
             if client_limit is not None and client_limit > 0:
-                return client_limit
+                return min(client_limit, _MAX_FEATURE_LIMIT)
         except Exception:
             pass
 
@@ -1654,11 +2154,11 @@ class OpenLayerDatasetSourceService:
             try:
                 value = getattr(settings, attr_name, None)
                 if value is not None:
-                    return max(1, _safe_int(value, 100) or 100)
+                    return min(_MAX_FEATURE_LIMIT, max(1, _safe_int(value, _MAX_FEATURE_LIMIT) or _MAX_FEATURE_LIMIT))
             except Exception:
                 continue
 
-        return 100
+        return _MAX_FEATURE_LIMIT
 
     def _resolve_user_agent(self, settings: Settings) -> str:
         for candidate in (
@@ -1729,6 +2229,7 @@ __all__ = [
     "OpenLayerDatasetSourceError",
     "OpenLayerDatasetSourceUnavailableError",
     "OpenLayerDatasetSourcePayloadError",
+    "OpenLayerDatasetSourcePayloadTooLargeError",
     "OpenLayerDatasetSourceResult",
     "OpenLayerDatasetSourceService",
     "DatasetSourceService",

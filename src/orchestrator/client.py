@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 import json
+import os
 from threading import RLock
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
@@ -41,7 +42,7 @@ _DEFAULT_CACHE_TTL_SECONDS = 20
 _DEFAULT_HEALTH_CACHE_TTL_SECONDS = 8
 _DEFAULT_CATALOG_CACHE_TTL_SECONDS = 20
 _DEFAULT_STYLE_CACHE_TTL_SECONDS = 25
-_DEFAULT_WFS_FEATURE_LIMIT = 100
+_DEFAULT_WFS_FEATURE_LIMIT = 1000
 
 _ALLOWED_HTTP_SCHEMES = frozenset({"http", "https"})
 _DEFAULT_JSON_ACCEPT = "application/json"
@@ -835,7 +836,14 @@ class GeoServerOrchestratorClient:
         request_headers = {
             "Accept": _DEFAULT_JSON_ACCEPT,
             "User-Agent": self.user_agent,
+            "X-Vectoplan-Consumer": "openlayers",
         }
+        service_token = (
+            os.getenv("OPENLAYER_ORCHESTRATOR_TOKEN")
+            or self._read_app_config_value("OPENLAYER_ORCHESTRATOR_TOKEN")
+        )
+        if service_token:
+            request_headers["X-Vectoplan-Service-Token"] = str(service_token).strip()
 
         started_at = _utc_now()
         request_obj = Request(

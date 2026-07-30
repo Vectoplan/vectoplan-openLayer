@@ -341,6 +341,8 @@ class OpenLayerRuleStyle:
     filter_expression: Optional[str]
     min_scale: Optional[float]
     max_scale: Optional[float]
+    filter_condition: Dict[str, Any] = field(default_factory=dict)
+    else_rule: bool = False
     style: Dict[str, Any] = field(default_factory=dict)
     label: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -359,6 +361,8 @@ class OpenLayerRuleStyle:
             "filter_expression": self.filter_expression,
             "min_scale": self.min_scale,
             "max_scale": self.max_scale,
+            "filter": deepcopy(self.filter_condition),
+            "else": self.else_rule,
             "style": deepcopy(self.style),
             "label": deepcopy(self.label),
             "metadata": deepcopy(self.metadata),
@@ -930,9 +934,12 @@ class OpenLayerStyleAdapter:
         title = (
             _safe_str(raw_rule.get("title"))
             or _safe_str(raw_rule.get("name"))
+            or _safe_str(raw_rule.get("label"))
             or f"Regel {rule_index + 1}"
         )
         rule_id = _safe_str(raw_rule.get("id")) or f"rule-{rule_index + 1}"
+        filter_condition = _normalize_mapping(raw_rule.get("when"))
+        else_rule = _safe_bool(raw_rule.get("else"), False)
         filter_expression = (
             _safe_str(raw_rule.get("filter"))
             or _safe_str(raw_rule.get("expression"))
@@ -968,13 +975,15 @@ class OpenLayerStyleAdapter:
             filter_expression=filter_expression,
             min_scale=min_scale,
             max_scale=max_scale,
+            filter_condition=filter_condition,
+            else_rule=else_rule,
             style=style,
             label=label,
             metadata=metadata,
             warnings=[],
         )
 
-        if filter_expression is None:
+        if filter_expression is None and not filter_condition and not else_rule:
             result.add_warning("Regel enthält keinen expliziten Filterausdruck.")
 
         return result
@@ -986,11 +995,6 @@ class OpenLayerStyleAdapter:
         geometry_type: str,
         fallback_rules: Sequence[OpenLayerRuleStyle],
     ) -> Dict[str, Any]:
-        if fallback_rules:
-            first_rule = fallback_rules[0]
-            if isinstance(first_rule.style, dict) and first_rule.style:
-                return deepcopy(first_rule.style)
-
         return self._build_symbolizer_from_mapping(
             mapping=raw_style_payload,
             geometry_type=geometry_type,
@@ -1003,7 +1007,13 @@ class OpenLayerStyleAdapter:
         *,
         geometry_type: str,
     ) -> Optional[Dict[str, Any]]:
+        default_block = _normalize_mapping(
+            raw_style_payload.get("default_style") or raw_style_payload.get("default")
+        )
+        rule_style_block = _normalize_mapping(raw_style_payload.get("style"))
         label_candidates = [
+            _normalize_mapping(default_block.get("label")),
+            _normalize_mapping(rule_style_block.get("label")),
             _normalize_mapping(raw_style_payload.get("label")),
             _normalize_mapping(raw_style_payload.get("labels")),
             _normalize_mapping(raw_style_payload.get("text")),
@@ -1015,43 +1025,81 @@ class OpenLayerStyleAdapter:
             if candidate:
                 merged.update(candidate)
 
+        enabled_value = merged.get("enabled")
+        if enabled_value is None:
+            enabled_value = rule_style_block.get("label_enabled")
+        if enabled_value is None:
+            enabled_value = default_block.get("label_enabled")
+        if enabled_value is None:
+            enabled_value = raw_style_payload.get("label_enabled")
+        if enabled_value is not None and not _safe_bool(enabled_value, False):
+            return None
+
         field_name = (
             _safe_str(merged.get("field"))
             or _safe_str(merged.get("attribute"))
             or _safe_str(merged.get("property"))
             or _safe_str(merged.get("text_field"))
+            or _safe_str(rule_style_block.get("label_field"))
+            or _safe_str(default_block.get("label_field"))
             or _safe_str(raw_style_payload.get("label_field"))
             or _safe_str(raw_style_payload.get("text_field"))
         )
-
         if not field_name:
             return None
 
+        def first_value(*values: Any) -> Any:
+            for value in values:
+                if value is not None:
+                    return value
+            return None
+
         color = self._normalize_css_color(
-            merged.get("color"),
+            first_value(
+                merged.get("color"),
+                rule_style_block.get("label_color"),
+                default_block.get("label_color"),
+                raw_style_payload.get("label_color"),
+            ),
             fallback="rgba(20,20,20,0.95)",
         )
         halo_color = self._normalize_css_color(
-            merged.get("halo_color") or merged.get("outline_color"),
+            first_value(
+                merged.get("halo_color"),
+                merged.get("outline_color"),
+                rule_style_block.get("label_halo_color"),
+                default_block.get("label_halo_color"),
+                raw_style_payload.get("label_halo_color"),
+            ),
             fallback="rgba(255,255,255,0.92)",
         )
+        placement = _safe_str(
+            first_value(
+                merged.get("placement"),
+                rule_style_block.get("label_placement"),
+                default_block.get("label_placement"),
+                raw_style_payload.get("label_placement"),
+            ),
+            "auto",
+        ) or "auto"
+        if placement not in {"auto", "point", "line"}:
+            placement = "auto"
 
-        label = {
+        return {
             "enabled": True,
             "field": field_name,
             "color": color,
-            "font_size": max(8, _safe_int(merged.get("font_size"), 12) or 12),
+            "font_size": max(8, _safe_int(first_value(merged.get("font_size"), merged.get("size"), rule_style_block.get("label_size"), default_block.get("label_size"), raw_style_payload.get("label_size")), 12) or 12),
             "font_family": _safe_str(merged.get("font_family"), "sans-serif") or "sans-serif",
             "font_weight": _safe_str(merged.get("font_weight"), "normal") or "normal",
             "halo_color": halo_color,
-            "halo_width": max(0, _safe_float(merged.get("halo_width"), 2.0) or 2.0),
+            "halo_width": max(0, _safe_float(first_value(merged.get("halo_width"), rule_style_block.get("label_halo_width"), default_block.get("label_halo_width"), raw_style_payload.get("label_halo_width")), 2.0) or 0.0),
             "offset_x": _safe_float(merged.get("offset_x"), 0.0) or 0.0,
             "offset_y": _safe_float(merged.get("offset_y"), 0.0) or 0.0,
+            "placement": placement,
+            "priority": max(1, min(10, _safe_int(first_value(merged.get("priority"), rule_style_block.get("label_priority"), default_block.get("label_priority"), raw_style_payload.get("label_priority")), 5) or 5)),
             "geometry_type": geometry_type,
         }
-
-        return label
-
     def _build_symbolizer_from_mapping(
         self,
         *,

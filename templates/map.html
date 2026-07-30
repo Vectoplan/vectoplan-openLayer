@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <meta name="color-scheme" content="light dark"/>
+  <meta name="color-scheme" content="light"/>
   <title>OpenLayer Map</title>
 
   {# Zentrale UI-Flags mit robusten Defaults #}
@@ -11,7 +11,7 @@
   {% set show_toolbar = ui_cfg.show_toolbar | default(true) %}
   {% set show_dataset_button = ui_cfg.show_dataset_button | default(true) %}
   {% set show_editor_button = ui_cfg.show_editor_button | default(false) %}
-  {% set show_zoom_buttons = ui_cfg.show_zoom_buttons | default(true) %}
+  {% set show_zoom_buttons = ui_cfg.show_zoom_buttons | default(false) %}
 
   {# Neue Runtime-/Diagnostik-Daten aus map.py #}
   {% set dataset_preview_cfg = dataset_catalog_preview if dataset_catalog_preview is defined and dataset_catalog_preview else {} %}
@@ -48,9 +48,6 @@
     href="https://cdn.jsdelivr.net/npm/ol@v10.6.1/ol.css"
     crossorigin="anonymous"
   />
-
-  <!-- Lokales Basis-CSS -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
 
   <!--
     Kritische Minimal-Styles direkt im Template:
@@ -463,6 +460,9 @@
       }
     </style>
   </noscript>
+
+  <!-- Professionelles UI-CSS nach den kritischen Fallback-Regeln laden. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260729-location-marker-1"/>
 </head>
 <body>
   <!-- Kartenfläche -->
@@ -494,7 +494,7 @@
           type="button"
           aria-label="Datensatzliste öffnen"
           aria-controls="dataset-panel"
-          aria-expanded="false"
+          aria-expanded="true"
           data-action="toggle-datasets"
           {% if not dataset_api_enabled %}disabled{% endif %}
         >
@@ -527,6 +527,25 @@
           </span>
           <span class="toolbar-button__label">Editor</span>
           <span class="sr-only">Editor</span>
+        </button>
+
+        <button
+          id="toolbar-download-toggle"
+          class="toolbar-button"
+          type="button"
+          aria-label="Downloads fuer die aktuelle Kartenkoordinate oeffnen"
+          aria-controls="download-panel"
+          aria-expanded="false"
+          data-action="toggle-downloads"
+          disabled
+        >
+          <span class="toolbar-button__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+              <path d="M11.25 4.75a.75.75 0 0 1 1.5 0v8.19l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.75ZM5.5 16a.75.75 0 0 1 .75.75v1.75h11.5v-1.75a.75.75 0 0 1 1.5 0v2.5a.75.75 0 0 1-.75.75h-13a.75.75 0 0 1-.75-.75v-2.5A.75.75 0 0 1 5.5 16Z"/>
+            </svg>
+          </span>
+          <span class="toolbar-button__label">Download</span>
+          <span class="sr-only">Daten herunterladen</span>
         </button>
 
         {% if show_zoom_buttons %}
@@ -569,11 +588,10 @@
         class="floating-panel"
         data-role="dataset-panel"
         aria-labelledby="toolbar-datasets-toggle"
-        hidden
       >
         <div class="floating-panel__header">
           <div>
-            <h2 class="floating-panel__title">Aktive Datensätze</h2>
+            <h2 class="floating-panel__title">Geodaten</h2>
             <div class="floating-panel__meta" id="dataset-panel-meta">
               {% if dataset_preview_cfg.available | default(false) %}
                 {{ dataset_preview_cfg.dataset_count | default(0) }} Datensätze erkannt.
@@ -713,8 +731,62 @@
           </ul>
         </div>
       </section>
+
+      <section
+        id="download-panel"
+        class="floating-panel download-panel"
+        data-role="download-panel"
+        aria-labelledby="toolbar-download-toggle"
+        hidden
+      >
+        <div class="floating-panel__header">
+          <div>
+            <h2 class="floating-panel__title">Kartenausschnitt herunterladen</h2>
+            <div class="floating-panel__meta" id="download-panel-meta">
+              Zuerst einen Datensatz auswaehlen und mindestens bis Zoomstufe
+              {{ dataset_min_load_zoom | default(14) }} hineinzoomen.
+            </div>
+          </div>
+          <button
+            id="download-panel-close"
+            class="floating-panel__close"
+            type="button"
+            aria-label="Downloadpanel schliessen"
+            data-action="close-downloads"
+          >
+            x
+          </button>
+        </div>
+
+        <div class="floating-panel__body">
+          <div class="download-coordinate" aria-live="polite">
+            <span class="download-coordinate__label">Projektstandort (WGS84)</span>
+            <strong id="download-coordinate-value">-</strong>
+          </div>
+          <p class="panel-note" id="download-panel-note">
+            DXF und DWG enthalten nur Daten im Radius von {{ dataset_radius_meters | default(400) }} Metern
+            um den Projektstandort. PDF erzeugt zwei A4-Dateien im Massstab 1:100 und 1:1000.
+          </p>
+          <div class="download-actions" aria-label="Downloadformate">
+            <button class="download-action" type="button" data-export-format="dxf">
+              <strong>DXF</strong>
+              <span>{{ dataset_radius_meters | default(400) }}-m-Radius</span>
+            </button>
+            <button class="download-action" type="button" data-export-format="dwg">
+              <strong>DWG</strong>
+              <span>{{ dataset_radius_meters | default(400) }}-m-Radius</span>
+            </button>
+            <button class="download-action download-action--wide" type="button" data-export-format="pdf">
+              <strong>PDF A4</strong>
+              <span>1:100 und 1:1000 - zwei Dateien</span>
+            </button>
+          </div>
+          <p id="download-status" class="download-status" role="status" hidden></p>
+        </div>
+      </section>
     </div>
     {% endif %}
+
 
     <div
       id="map-status-banner"
@@ -739,7 +811,7 @@
           {% if server_error_detail %} ({{ server_error_detail }}){% endif %}.
           Die Oberfläche wurde mit sicheren Fallback-Werten geladen.
         {% elif style_token_mismatch %}
-          Für den gewählten Stil <strong>{{ style_id | default("mapbox/satellite-streets-v12") }}</strong>
+          Für den gewählten Stil <strong>{{ style_id | default("mapbox/light-v11") }}</strong>
           wird ein Mapbox-Token benötigt. Die Client-Logik kann auf einen Fallback wechseln.
         {% else %}
           Die Kartenoberfläche wurde initialisiert.
@@ -784,10 +856,10 @@
       try {
         var flatConfig = {
           token: {{ (mapbox_token or "") | tojson }},
-          styleId: {{ (style_id or "mapbox/satellite-streets-v12") | tojson }},
+          styleId: {{ (style_id or "mapbox/light-v11") | tojson }},
           lon: {{ (lon if lon is defined else 11.576124) | tojson }},
           lat: {{ (lat if lat is defined else 48.137154) | tojson }},
-          zoom: {{ (zoom if zoom is defined else 14) | tojson }},
+          zoom: {{ (zoom if zoom is defined else 17) | tojson }},
           minZoom: {{ (min_zoom if min_zoom is defined else 0) | tojson }},
           maxZoom: {{ (max_zoom if max_zoom is defined else 22) | tojson }},
           tileSize: {{ (tile_size if tile_size is defined else 512) | tojson }},
@@ -799,10 +871,15 @@
 
           datasetApiEnabled: {{ (true if dataset_api_enabled else false) | tojson }},
           editorEnabled: {{ (true if editor_enabled else false) | tojson }},
+          datasetMinLoadZoom: {{ (dataset_min_load_zoom if dataset_min_load_zoom is defined else 14) | tojson }},
+          datasetFeatureLimit: {{ (dataset_feature_limit if dataset_feature_limit is defined else 1000) | tojson }},
+          datasetRadiusMeters: {{ (dataset_radius_meters if dataset_radius_meters is defined else 400) | tojson }},
+          datasetExportEnabled: {{ (true if dataset_export_enabled else false) | tojson }},
           datasetsApiUrl: {{ (datasets_api_url_cfg or "/api/datasets?include_style_details=1&include_invalid=0") | tojson }},
           datasetsApiUrlBase: {{ (datasets_api_url_base_cfg or "/api/datasets") | tojson }},
           datasetsApiStyleContractUrl: {{ (datasets_api_style_contract_url_cfg or "/api/datasets?include_style_details=1&include_style_contract=1&include_invalid=0") | tojson }},
           datasetSourceUrlTemplate: {{ (dataset_source_url_template_cfg or "/api/datasets/{dataset_id}/source") | tojson }},
+          datasetExportUrlTemplate: {{ (dataset_export_url_template or "/api/datasets/{dataset_id}/export") | tojson }},
           datasetStyleUrlTemplate: {{ (dataset_style_url_template_cfg or "/api/datasets/{dataset_id}?include_style_contract=1") | tojson }},
           datasetChangesUrlTemplate: {{ (dataset_changes_url_template_cfg or "/api/datasets/{dataset_id}/changes") | tojson }},
 
@@ -849,10 +926,15 @@
           serverErrorDetail: flatConfig.serverErrorDetail,
           datasetApiEnabled: flatConfig.datasetApiEnabled,
           editorEnabled: flatConfig.editorEnabled,
+          datasetMinLoadZoom: flatConfig.datasetMinLoadZoom,
+          datasetFeatureLimit: flatConfig.datasetFeatureLimit,
+          datasetRadiusMeters: flatConfig.datasetRadiusMeters,
+          datasetExportEnabled: flatConfig.datasetExportEnabled,
           datasetsApiUrl: flatConfig.datasetsApiUrl,
           datasetsApiUrlBase: flatConfig.datasetsApiUrlBase,
           datasetsApiStyleContractUrl: flatConfig.datasetsApiStyleContractUrl,
           datasetSourceUrlTemplate: flatConfig.datasetSourceUrlTemplate,
+          datasetExportUrlTemplate: flatConfig.datasetExportUrlTemplate,
           datasetStyleUrlTemplate: flatConfig.datasetStyleUrlTemplate,
           datasetChangesUrlTemplate: flatConfig.datasetChangesUrlTemplate,
           geoserverOrchestratorUrl: flatConfig.geoserverOrchestratorUrl,
@@ -877,6 +959,7 @@
             zoom: flatConfig.zoom,
             minZoom: flatConfig.minZoom,
             maxZoom: flatConfig.maxZoom,
+            locationRadiusMeters: flatConfig.datasetRadiusMeters,
             styleId: flatConfig.styleId,
             tileSize: flatConfig.tileSize,
             disableScroll: flatConfig.disableScroll,
@@ -888,6 +971,7 @@
             datasetsBaseUrl: flatConfig.datasetsApiUrlBase,
             datasetsStyleContractUrl: flatConfig.datasetsApiStyleContractUrl,
             datasetSourceUrlTemplate: flatConfig.datasetSourceUrlTemplate,
+            datasetExportUrlTemplate: flatConfig.datasetExportUrlTemplate,
             datasetStyleUrlTemplate: flatConfig.datasetStyleUrlTemplate,
             datasetChangesUrlTemplate: flatConfig.datasetChangesUrlTemplate,
             geoserverOrchestratorUrl: flatConfig.geoserverOrchestratorUrl
@@ -895,7 +979,11 @@
 
           features: {
             datasetApiEnabled: flatConfig.datasetApiEnabled,
-            editorEnabled: flatConfig.editorEnabled
+            editorEnabled: flatConfig.editorEnabled,
+            datasetMinLoadZoom: flatConfig.datasetMinLoadZoom,
+            datasetFeatureLimit: flatConfig.datasetFeatureLimit,
+            datasetRadiusMeters: flatConfig.datasetRadiusMeters,
+            datasetExportEnabled: flatConfig.datasetExportEnabled
           },
 
           initialDataset: {
@@ -925,10 +1013,10 @@
         try { console.error("[OpenLayer] Config-Bootstrap fehlgeschlagen:", e); } catch (_) {}
         window.OPENLAYER_CONFIG = Object.freeze({
           token: "",
-          styleId: "mapbox/satellite-streets-v12",
+          styleId: "mapbox/light-v11",
           lon: 11.576124,
           lat: 48.137154,
-          zoom: 14,
+          zoom: 17,
           minZoom: 0,
           maxZoom: 22,
           tileSize: 512,
@@ -940,10 +1028,15 @@
 
           datasetApiEnabled: false,
           editorEnabled: false,
+          datasetMinLoadZoom: 14,
+          datasetFeatureLimit: 1000,
+          datasetRadiusMeters: 400,
+          datasetExportEnabled: false,
           datasetsApiUrl: "/api/datasets?include_style_details=1&include_invalid=0",
           datasetsApiUrlBase: "/api/datasets",
           datasetsApiStyleContractUrl: "/api/datasets?include_style_details=1&include_style_contract=1&include_invalid=0",
           datasetSourceUrlTemplate: "/api/datasets/{dataset_id}/source",
+          datasetExportUrlTemplate: "/api/datasets/{dataset_id}/export",
           datasetStyleUrlTemplate: "/api/datasets/{dataset_id}?include_style_contract=1",
           datasetChangesUrlTemplate: "/api/datasets/{dataset_id}/changes",
 
@@ -982,7 +1075,7 @@
             showToolbar: true,
             showDatasetButton: true,
             showEditorButton: false,
-            showZoomButtons: true
+            showZoomButtons: false
           }
         });
       }
@@ -990,6 +1083,6 @@
   </script>
 
   <!-- Lokales JS -->
-  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260729-location-marker-1" defer></script>
 </body>
 </html>
