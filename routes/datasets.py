@@ -94,6 +94,7 @@ try:
     from src.exports.export_service import (
         ExportUnavailableError,
         build_export_artifact,
+        build_pdf_zip_artifact,
         pdf_bbox_for_scale,
     )
 except Exception:  # pragma: no cover
@@ -101,6 +102,7 @@ except Exception:  # pragma: no cover
         from ..src.exports.export_service import (  # type: ignore
             ExportUnavailableError,
             build_export_artifact,
+            build_pdf_zip_artifact,
             pdf_bbox_for_scale,
         )
     except Exception as exc:  # pragma: no cover
@@ -1246,32 +1248,52 @@ def dataset_export(dataset_id: str) -> Response:
 
         center = _location_center(None)
         radius_meters = _configured_dataset_radius_meters()
+        feature_limit = _configured_dataset_feature_limit()
+        source_service = _get_dataset_source_service()
+        source_results = []
+        export_bboxes = []
+        payloads_by_scale: Dict[int, Mapping[str, Any]] = {}
 
-        scale: Optional[int] = None
         if export_format == "pdf":
-            scale = _query_int("scale", 0)
-            if scale not in {100, 1000}:
-                raise ValueError("PDF scale must be 100 or 1000")
-            bbox = pdf_bbox_for_scale(center, scale)
+            for pdf_scale in (100, 1000):
+                bbox = pdf_bbox_for_scale(center, pdf_scale)
+                source_result = source_service.get_dataset_source(
+                    dataset_id,
+                    use_cache=True,
+                    bbox=bbox,
+                    bbox_crs="CRS:84",
+                    circle_center=center,
+                    circle_radius_m=radius_meters,
+                    feature_limit=feature_limit,
+                )
+                if not isinstance(source_result.payload, Mapping):
+                    return _json_error(
+                        500,
+                        "dataset export source payload missing",
+                        extra={"dataset_id": dataset_id},
+                    )
+                source_results.append(source_result)
+                export_bboxes.append(bbox)
+                payloads_by_scale[pdf_scale] = source_result.payload
         else:
             bbox = _bbox_for_location_radius(center, radius_meters)
-
-        feature_limit = _configured_dataset_feature_limit()
-        source_result = _get_dataset_source_service().get_dataset_source(
-            dataset_id,
-            use_cache=True,
-            bbox=bbox,
-            bbox_crs="CRS:84",
-            circle_center=center,
-            circle_radius_m=radius_meters,
-            feature_limit=feature_limit,
-        )
-        if not isinstance(source_result.payload, Mapping):
-            return _json_error(
-                500,
-                "dataset export source payload missing",
-                extra={"dataset_id": dataset_id},
+            source_result = source_service.get_dataset_source(
+                dataset_id,
+                use_cache=True,
+                bbox=bbox,
+                bbox_crs="CRS:84",
+                circle_center=center,
+                circle_radius_m=radius_meters,
+                feature_limit=feature_limit,
             )
+            if not isinstance(source_result.payload, Mapping):
+                return _json_error(
+                    500,
+                    "dataset export source payload missing",
+                    extra={"dataset_id": dataset_id},
+                )
+            source_results.append(source_result)
+            export_bboxes.append(bbox)
 
         dataset = _get_dataset_catalog_service().get_dataset_dict(
             dataset_id,
@@ -1281,33 +1303,52 @@ def dataset_export(dataset_id: str) -> Response:
             use_cache=True,
         )
         dataset_title = _safe_str(dataset.get("title"), "").strip() or dataset_id
-        artifact = build_export_artifact(
-            export_format=export_format,
-            dataset_id=dataset_id,
-            dataset_title=dataset_title,
-            payload=source_result.payload,
-            center=center,
-            scale=scale,
-            dwg_converter_command=_safe_str(
-                getattr(settings, "dwg_converter_command", "dxf2dwg"),
-                "dxf2dwg",
-            ),
-        )
 
+        if export_format == "pdf":
+            artifact = build_pdf_zip_artifact(
+                dataset_id=dataset_id,
+                dataset_title=dataset_title,
+                payloads_by_scale=payloads_by_scale,
+                center=center,
+            )
+        else:
+            artifact = build_export_artifact(
+                export_format=export_format,
+                dataset_id=dataset_id,
+                dataset_title=dataset_title,
+                payload=source_results[0].payload,
+                center=center,
+                dwg_converter_command=_safe_str(
+                    getattr(settings, "dwg_converter_command", "dxf2dwg"),
+                    "dxf2dwg",
+                ),
+            )
+
+        representative_result = source_results[-1]
+        feature_count = max(
+            max(0, _safe_int(getattr(result, "feature_count", 0), 0))
+            for result in source_results
+        )
         response = make_response(artifact.content, 200)
         response.headers["Content-Type"] = artifact.content_type
         response.headers["Content-Disposition"] = f'attachment; filename="{artifact.filename}"'
         response.headers["Content-Length"] = str(len(artifact.content))
         response.headers["Cache-Control"] = "no-store"
-        response.headers["X-OpenLayer-Dataset-Id"] = source_result.dataset_id
-        response.headers["X-OpenLayer-Feature-Count"] = str(source_result.feature_count)
-        response.headers["X-OpenLayer-Feature-Limit"] = str(source_result.feature_limit or feature_limit)
+        response.headers["X-OpenLayer-Dataset-Id"] = representative_result.dataset_id
+        response.headers["X-OpenLayer-Feature-Count"] = str(feature_count)
+        response.headers["X-OpenLayer-Feature-Limit"] = str(
+            representative_result.feature_limit or feature_limit
+        )
         response.headers["X-OpenLayer-Export-Format"] = export_format
-        response.headers["X-OpenLayer-Center"] = ",".join(format(value, ".9g") for value in center)
+        response.headers["X-OpenLayer-Center"] = ",".join(
+            format(value, ".9g") for value in center
+        )
         response.headers["X-OpenLayer-Radius-Meters"] = str(radius_meters)
-        response.headers["X-OpenLayer-Bbox"] = ",".join(format(value, ".9g") for value in bbox or ())
-        if scale is not None:
-            response.headers["X-OpenLayer-Pdf-Scale"] = str(scale)
+        response.headers["X-OpenLayer-Bbox"] = ",".join(
+            format(value, ".9g") for value in export_bboxes[-1]
+        )
+        if export_format == "pdf":
+            response.headers["X-OpenLayer-Pdf-Scales"] = "100,1000"
         return response
 
     except ValueError as exc:
@@ -1349,6 +1390,8 @@ def dataset_export(dataset_id: str) -> Response:
             detail=exc.__class__.__name__,
             extra={"dataset_id": dataset_id},
         )
+
+
 @bp.route("/api/datasets/<string:dataset_id>/changes", methods=["POST"])
 def dataset_changes(dataset_id: str) -> Response:
     """

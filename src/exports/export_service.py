@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from typing import Any, Iterator, Mapping, Optional, Sequence, Tuple
 import unicodedata
+from zipfile import ZIP_DEFLATED, ZipFile
 
 
 EARTH_RADIUS_M = 6_378_137.0
@@ -380,4 +381,50 @@ def build_export_artifact(
         content=_convert_dxf_to_dwg(dxf_content, dwg_converter_command),
         content_type="application/acad",
         filename=f"{base_name}_{coordinate_name}.dwg",
+    )
+
+
+def build_pdf_zip_artifact(
+    *,
+    dataset_id: str,
+    dataset_title: str,
+    payloads_by_scale: Mapping[int, Mapping[str, Any]],
+    center: Sequence[float],
+) -> ExportArtifact:
+    """Packages the two supported A4 PDF scales into one ZIP download."""
+    if len(center) != 2:
+        raise ValueError("center must contain longitude and latitude")
+
+    missing_scales = sorted(
+        scale for scale in SUPPORTED_PDF_SCALES if scale not in payloads_by_scale
+    )
+    if missing_scales:
+        raise ValueError(
+            "PDF ZIP requires payloads for scales: "
+            + ", ".join(str(scale) for scale in missing_scales)
+        )
+
+    normalized_center = float(center[0]), float(center[1])
+    base_name = _safe_filename(dataset_title or dataset_id, "dataset")
+    coordinate_name = (
+        f"{normalized_center[1]:.6f}_{normalized_center[0]:.6f}".replace("-", "m")
+    )
+    output = BytesIO()
+
+    with ZipFile(output, mode="w", compression=ZIP_DEFLATED) as archive:
+        for scale in sorted(SUPPORTED_PDF_SCALES):
+            artifact = build_export_artifact(
+                export_format="pdf",
+                dataset_id=dataset_id,
+                dataset_title=dataset_title,
+                payload=payloads_by_scale[scale],
+                center=normalized_center,
+                scale=scale,
+            )
+            archive.writestr(artifact.filename, artifact.content)
+
+    return ExportArtifact(
+        content=output.getvalue(),
+        content_type="application/zip",
+        filename=f"{base_name}_{coordinate_name}_PDF_A4.zip",
     )

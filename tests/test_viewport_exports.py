@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from io import BytesIO
 import math
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
+from zipfile import ZipFile
 
 from flask import Flask
 
@@ -13,7 +15,11 @@ from src.datasets.source_service import (
     OpenLayerDatasetSourcePayloadTooLargeError,
     OpenLayerDatasetSourceService,
 )
-from src.exports.export_service import build_export_artifact, pdf_bbox_for_scale
+from src.exports.export_service import (
+    build_export_artifact,
+    build_pdf_zip_artifact,
+    pdf_bbox_for_scale,
+)
 
 
 SAMPLE_PAYLOAD = {
@@ -175,6 +181,23 @@ class ExportServiceTests(unittest.TestCase):
         self.assertTrue(pdf.content.startswith(b"%PDF-"))
         self.assertTrue(pdf.filename.endswith("_M100.pdf"))
 
+    def test_pdf_zip_contains_both_supported_scales(self) -> None:
+        artifact = build_pdf_zip_artifact(
+            dataset_id="roads",
+            dataset_title="Roads",
+            payloads_by_scale={100: SAMPLE_PAYLOAD, 1000: SAMPLE_PAYLOAD},
+            center=(11.5770, 48.1371),
+        )
+
+        self.assertEqual(artifact.content_type, "application/zip")
+        self.assertTrue(artifact.filename.endswith("_PDF_A4.zip"))
+        with ZipFile(BytesIO(artifact.content)) as archive:
+            names = sorted(archive.namelist())
+            self.assertEqual(len(names), 2)
+            self.assertTrue(any(name.endswith("_M100.pdf") for name in names))
+            self.assertTrue(any(name.endswith("_M1000.pdf") for name in names))
+            self.assertTrue(all(archive.read(name).startswith(b"%PDF-") for name in names))
+
     def test_invalid_pdf_scale_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "100 or 1000"):
             build_export_artifact(
@@ -219,6 +242,52 @@ class DatasetRouteTests(unittest.TestCase):
                 include_internal=False,
             )
         self.assertEqual(item["source"]["max_features"], 1000)
+
+    def test_pdf_export_returns_one_zip_with_both_scales(self) -> None:
+        source_service = Mock()
+        source_service.get_dataset_source.return_value = SimpleNamespace(
+            dataset_id="roads",
+            provider="geoserver",
+            feature_count=2,
+            feature_limit=1000,
+            trimmed=False,
+            from_cache=False,
+            stale_cache_used=False,
+            payload=SAMPLE_PAYLOAD,
+        )
+        catalog_service = Mock()
+        catalog_service.get_dataset_dict.return_value = {
+            "id": "roads",
+            "title": "Roads",
+        }
+
+        with (
+            patch.object(dataset_routes, "_settings", return_value=self.settings),
+            patch.object(
+                dataset_routes,
+                "_get_dataset_source_service",
+                return_value=source_service,
+            ),
+            patch.object(
+                dataset_routes,
+                "_get_dataset_catalog_service",
+                return_value=catalog_service,
+            ),
+        ):
+            response = self.client.get(
+                "/api/datasets/roads/export?format=pdf&lon=11.577&lat=48.1371&zoom=14"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/zip")
+        self.assertIn("_PDF_A4.zip", response.headers["Content-Disposition"])
+        self.assertEqual(response.headers["X-OpenLayer-Pdf-Scales"], "100,1000")
+        self.assertEqual(source_service.get_dataset_source.call_count, 2)
+        with ZipFile(BytesIO(response.data)) as archive:
+            names = sorted(archive.namelist())
+            self.assertEqual(len(names), 2)
+            self.assertTrue(any(name.endswith("_M100.pdf") for name in names))
+            self.assertTrue(any(name.endswith("_M1000.pdf") for name in names))
 
     def test_source_does_not_call_upstream_below_minimum_zoom(self) -> None:
         source_service = Mock()

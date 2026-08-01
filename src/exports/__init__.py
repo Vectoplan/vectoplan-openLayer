@@ -4,9 +4,11 @@ from .export_service import (
     ExportArtifact,
     ExportUnavailableError,
     build_export_artifact,
+    build_pdf_zip_artifact,
     pdf_bbox_for_scale,
 )
 
 __all__ = [
-    "ExportArtifact", "ExportUnavailableError", "build_export_artifact", "pdf_bbox_for_scale"
+    "ExportArtifact", "ExportUnavailableError", "build_export_artifact",
+    "build_pdf_zip_artifact", "pdf_bbox_for_scale",
 ]

@@ -1092,30 +1092,6 @@ body {
   gap: 14px;
 }
 
-.download-coordinate {
-  display: grid;
-  gap: 5px;
-  padding: 12px 14px;
-  border: 1px solid var(--app-info-border);
-  border-radius: 12px;
-  background: var(--app-info-bg);
-  color: var(--app-info-fg);
-}
-
-.download-coordinate__label {
-  color: var(--app-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.download-coordinate strong {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 14px;
-  letter-spacing: 0.01em;
-}
-
 .download-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1180,4 +1156,28 @@ body {
   border-color: var(--app-danger-border);
   background: var(--app-danger-bg);
   color: var(--app-danger-fg);
+}
+
+/* Leave the left edge clear for the parent project's workspace rail. */
+#toolbar-stack,
+.toolbar-stack {
+  right: 12px;
+  left: auto;
+}
+
+.toolbar-stack .toolbar-group {
+  align-self: flex-end;
+}
+
+@media (max-width: 640px) {
+  #toolbar-stack,
+  .toolbar-stack {
+    right: 10px;
+    left: auto;
+    max-width: calc(100vw - 78px);
+  }
+
+  .floating-panel {
+    width: min(100%, calc(100vw - 78px));
+  }
 }

@@ -354,12 +354,17 @@
     var enableWheelZoom = asBool(raw.enableWheelZoom, !disableScroll) && !disableScroll;
 
     var preserveInitialView = false;
+    var initialDatasetPanelOpen = true;
 
     try {
       var initialSearchParams = new URLSearchParams(window.location.search || "");
       preserveInitialView = initialSearchParams.has("lon") && initialSearchParams.has("lat");
+      var initialPanel = asText(initialSearchParams.get("initial_panel"), "").toLowerCase();
+      var presentationMode = asText(initialSearchParams.get("mode"), "").toLowerCase();
+      initialDatasetPanelOpen = presentationMode !== "preview" && ["none", "closed", "hidden"].indexOf(initialPanel) === -1;
     } catch (_) {
       preserveInitialView = false;
+      initialDatasetPanelOpen = true;
     }
 
     var token = asText(raw.token, "");
@@ -453,6 +458,7 @@
 
       initialDatasetId: asText(raw.initialDatasetId, ""),
       initialDatasetTitle: asText(raw.initialDatasetTitle, ""),
+      initialDatasetPanelOpen: initialDatasetPanelOpen,
 
       datasetCatalogPreview: datasetPreview,
       serviceHealth: serviceHealth,
@@ -536,7 +542,7 @@
     },
 
     ui: {
-      datasetPanelOpen: true,
+      datasetPanelOpen: cfg.initialDatasetPanelOpen,
       editorPanelOpen: false,
       downloadPanelOpen: false,
       exportLoading: false
@@ -555,13 +561,11 @@
     btnZoomOut: null,
 
     datasetPanel: null,
-    datasetPanelMeta: null,
     datasetPanelLoading: null,
     datasetPanelError: null,
     datasetPanelEmpty: null,
     datasetPanelDisabledNote: null,
     datasetPanelServiceNote: null,
-    datasetPanelLimitNote: null,
     datasetPanelClose: null,
     datasetList: null,
     datasetTemplate: null,
@@ -572,10 +576,7 @@
     editorPanelClose: null,
 
     downloadPanel: null,
-    downloadPanelMeta: null,
-    downloadPanelNote: null,
     downloadPanelClose: null,
-    downloadCoordinateValue: null,
     downloadStatus: null,
     downloadActions: [],
     statusBanner: null,
@@ -601,13 +602,11 @@
     dom.btnZoomOut = q("#toolbar-zoom-out");
 
     dom.datasetPanel = q("#dataset-panel");
-    dom.datasetPanelMeta = q("#dataset-panel-meta");
     dom.datasetPanelLoading = q("#dataset-panel-loading");
     dom.datasetPanelError = q("#dataset-panel-error");
     dom.datasetPanelEmpty = q("#dataset-panel-empty");
     dom.datasetPanelDisabledNote = q("#dataset-panel-disabled-note");
     dom.datasetPanelServiceNote = q("#dataset-panel-service-note");
-    dom.datasetPanelLimitNote = q("#dataset-panel-limit-note");
     dom.datasetPanelClose = q("#dataset-panel-close");
     dom.datasetList = q("#dataset-list");
     dom.datasetTemplate = q("#dataset-item-template");
@@ -618,10 +617,7 @@
     dom.editorPanelClose = q("#editor-panel-close");
 
     dom.downloadPanel = q("#download-panel");
-    dom.downloadPanelMeta = q("#download-panel-meta");
-    dom.downloadPanelNote = q("#download-panel-note");
     dom.downloadPanelClose = q("#download-panel-close");
-    dom.downloadCoordinateValue = q("#download-coordinate-value");
     dom.downloadStatus = q("#download-status");
     dom.downloadActions = qa("[data-export-format]", dom.downloadPanel);
     dom.statusBanner = q("#map-status-banner");
@@ -2339,24 +2335,6 @@
     var downloadAllowed = cfg.datasetExportEnabled && hasDataset && zoomAllowed;
 
     setDisabled(dom.btnDownload, !downloadAllowed);
-    if (dom.downloadCoordinateValue) {
-      setText(
-        dom.downloadCoordinateValue,
-        viewport ? (viewport.center[1].toFixed(7) + ", " + viewport.center[0].toFixed(7)) : "-"
-      );
-    }
-    if (dom.downloadPanelMeta) {
-      if (!hasDataset) {
-        setText(dom.downloadPanelMeta, "Zuerst einen Datensatz auswaehlen.");
-      } else if (!zoomAllowed) {
-        setText(dom.downloadPanelMeta, "Ab Zoomstufe " + String(cfg.datasetMinLoadZoom) + " werden Daten und Downloads aktiviert.");
-      } else {
-        setText(
-          dom.downloadPanelMeta,
-          asText(state.activeDataset.title, state.activeDataset.id) + " | " + String(cfg.datasetRadiusMeters) + " m Radius | max. " + String(cfg.datasetFeatureLimit) + " Features"
-        );
-      }
-    }
     toArray(dom.downloadActions).forEach(function (button) {
       setDisabled(button, !downloadAllowed || state.datasets.loading || state.ui.exportLoading);
     });
@@ -2400,11 +2378,6 @@
       try {
         if (state.datasetSource) { state.datasetSource.clear(true); }
       } catch (_) {}
-      if (state.activeDataset) {
-        updateDatasetPanelMetaText(
-          "Keine Daten unter Zoomstufe " + String(cfg.datasetMinLoadZoom)
-        );
-      }
       updateViewportIndicators(viewport);
     }
 
@@ -2555,33 +2528,6 @@
     } catch (_) {}
   }
 
-  function updateDatasetPanelMetaText(extraText) {
-    try {
-      if (!dom.datasetPanelMeta) { return; }
-
-      var parts = [];
-      var preview = cfg.datasetCatalogPreview || {};
-
-      if (state.activeDataset) {
-        parts.push("Aktiver Datensatz: " + asText(state.activeDataset.title, state.activeDataset.id));
-      } else if (asBool(preview.available, false) && numOr(preview.dataset_count, 0) > 0) {
-        parts.push(String(numOr(preview.dataset_count, 0)) + " Datensätze verfügbar");
-      } else {
-        parts.push("Es kann immer nur ein Datensatz gleichzeitig eingeblendet werden.");
-      }
-
-      if (state.activeDataset && state.activeDataset.source && state.activeDataset.source.type === "wfs") {
-        parts.push("WFS-Limit: max " + String(cfg.datasetFeatureLimit) + " Features");
-      }
-
-      if (hasText(extraText)) {
-        parts.push(asText(extraText, ""));
-      }
-
-      setText(dom.datasetPanelMeta, parts.join(" · "));
-    } catch (_) {}
-  }
-
   function normalizeDatasetResponseItem(rawItem, index) {
     return normalizeDatasetItem(rawItem, index);
   }
@@ -2662,7 +2608,6 @@
 
     if (!list.length) {
       setHidden(dom.datasetPanelEmpty, false);
-      updateDatasetPanelMetaText("Keine Datensätze verfügbar.");
       return;
     }
 
@@ -2678,36 +2623,18 @@
         } else {
           node = document.createElement("li");
           node.className = "dataset-item";
-          node.innerHTML = '<button type="button" class="dataset-item__button" data-role="dataset-item-button"><span class="dataset-item__title" data-role="dataset-item-title"></span><span class="dataset-item__meta" data-role="dataset-item-meta"></span><span class="dataset-item__description" data-role="dataset-item-description" hidden></span></button>';
+          node.innerHTML = '<button type="button" class="dataset-item__button" data-role="dataset-item-button"><span class="dataset-item__title" data-role="dataset-item-title"></span><span class="dataset-item__description" data-role="dataset-item-description" hidden></span></button>';
         }
 
         var button = q("[data-role='dataset-item-button']", node);
         var title = q("[data-role='dataset-item-title']", node);
-        var meta = q("[data-role='dataset-item-meta']", node);
         var description = q("[data-role='dataset-item-description']", node);
-
-        var sourceTypeLabel = "";
-        if (item.source && hasText(item.source.type)) {
-          sourceTypeLabel = item.source.type.toUpperCase();
-          if (item.source.type === "wfs" && numOr(item.source.featureLimit, 0) > 0) {
-            sourceTypeLabel += " · max " + String(numOr(item.source.featureLimit, DEFAULT_WFS_FEATURE_LIMIT));
-          }
-        }
-
-        var metaText = [
-          asText(item.geometry_type, ""),
-          item.editable ? "editierbar" : "nur Ansicht",
-          sourceTypeLabel,
-          hasUsableStyleContract(item) ? "Style" : "",
-          item.active ? "aktiv" : "inaktiv"
-        ].filter(function (x) { return hasText(x); }).join(" • ");
 
         var descriptionText = hasText(item.description)
           ? item.description
           : (item.warnings && item.warnings.length ? item.warnings[0] : "");
 
         setText(title, item.title || item.id || "Datensatz");
-        setText(meta, metaText || "Datensatz");
         if (hasText(descriptionText)) {
           setText(description, truncateText(descriptionText, 180));
           setHidden(description, false);
@@ -2729,7 +2656,6 @@
       }
     });
 
-    updateDatasetPanelMetaText();
     markActiveDatasetButton(state.activeDataset ? state.activeDataset.id : "");
   }
 
@@ -2742,7 +2668,6 @@
       setHidden(dom.datasetPanelError, true);
       setHidden(dom.datasetPanelEmpty, true);
       if (dom.datasetList) { dom.datasetList.innerHTML = ""; }
-      updateDatasetPanelMetaText("Dataset-API ist deaktiviert.");
       return Promise.resolve([]);
     }
 
@@ -2767,7 +2692,6 @@
       setHidden(dom.datasetPanelLoading, true);
       setHidden(dom.datasetPanelError, false);
       setHidden(dom.datasetPanelEmpty, true);
-      updateDatasetPanelMetaText("Die Datensatzliste konnte nicht geladen werden.");
       setToast("danger", "Datensatzliste", "Die Datensatzliste konnte nicht geladen werden.", 3800);
       return [];
     });
@@ -3151,7 +3075,7 @@
     upsertDatasetIntoState(dataset);
     markActiveDatasetButton(dataset.id);
     updateEditorButtonState();
-    var datasetZoomAllowed = setDatasetZoomVisibility(getCurrentViewportContext());
+    setDatasetZoomVisibility(getCurrentViewportContext());
 
     if (!options.silent) {
       setToast(
@@ -3160,14 +3084,6 @@
         warning || (asText(dataset.title, dataset.id) + " wurde ausgewaehlt."),
         warning ? 4200 : 2400
       );
-    }
-
-    if (datasetZoomAllowed) {
-      updateDatasetPanelMetaText(
-        featureCount + " Features im " + String(cfg.datasetRadiusMeters) + "-m-Radius" + (warning ? " (Limit erreicht)" : "")
-      );
-    } else {
-      updateDatasetPanelMetaText("Keine Daten unter Zoomstufe " + String(cfg.datasetMinLoadZoom));
     }
 
     if (wasEditorActive && !replacingCurrent) {
@@ -3202,11 +3118,9 @@
     state.datasets.requestSerial = requestSerial;
     state.datasets.requestController = requestController;
     state.datasets.loading = true;
-    updateDatasetPanelMetaText(String(cfg.datasetRadiusMeters) + "-m-Radius wird geladen ...");
     updateViewportIndicators(viewport);
 
     var loadedFeatureCount = 0;
-    var totalAvailable = 0;
     var finalWarning = "";
     var batchSize = Math.min(DEFAULT_DATASET_BATCH_SIZE, cfg.datasetFeatureLimit);
 
@@ -3246,7 +3160,6 @@
         }
 
         loadedFeatureCount += batchFeatures.length;
-        totalAvailable = clamp(numOr(result.totalAvailable, loadedFeatureCount), 0, cfg.datasetFeatureLimit);
         finalWarning = asText(result.warning, finalWarning);
         state.datasets.lastFeatureCount = loadedFeatureCount;
 
@@ -3256,9 +3169,6 @@
           && loadedFeatureCount < cfg.datasetFeatureLimit;
 
         if (hasMore) {
-          updateDatasetPanelMetaText(
-            String(loadedFeatureCount) + " von " + String(totalAvailable) + " Features werden schrittweise geladen ..."
-          );
           updateViewportIndicators(viewport);
           return new Promise(function (resolve) {
             window.setTimeout(resolve, DATASET_BATCH_DELAY_MS);
@@ -3268,9 +3178,6 @@
         }
 
         state.datasets.lastViewportKey = viewport.key;
-        updateDatasetPanelMetaText(
-          String(loadedFeatureCount) + " Features im " + String(cfg.datasetRadiusMeters) + "-m-Radius" + (finalWarning ? " (Limit erreicht)" : "")
-        );
         if (options.notify) {
           setToast(
             "success",
@@ -3336,7 +3243,6 @@
       } catch (_) {}
 
       markActiveDatasetButton(refreshedDataset.id);
-      updateDatasetPanelMetaText("Darstellung aktuell");
 
       if (options.notify !== false) {
         setToast(
@@ -3647,7 +3553,7 @@
     setHidden(dom.downloadStatus, !hasText(text));
   }
 
-  function buildExportRequestUrl(exportFormat, scale) {
+  function buildExportRequestUrl(exportFormat) {
     if (!state.activeDataset) { return ""; }
     var viewport = getCurrentViewportContext();
     if (!viewport || viewport.zoom < cfg.datasetMinLoadZoom) { return ""; }
@@ -3661,9 +3567,7 @@
       parsed.searchParams.set("lat", viewport.center[1].toFixed(8));
       parsed.searchParams.set("radius_m", String(cfg.datasetRadiusMeters));
       parsed.searchParams.set("zoom", Number(viewport.zoom).toFixed(3));
-      if (exportFormat === "pdf") {
-        parsed.searchParams.set("scale", String(scale));
-      } else {
+      if (exportFormat !== "pdf") {
         parsed.searchParams.set("bbox", viewport.bbox.map(function (value) {
           return Number(value).toFixed(8);
         }).join(","));
@@ -3687,7 +3591,7 @@
   function fetchExportArtifact(url, fallbackName) {
     return window.fetch(url, {
       method: "GET",
-      headers: { "Accept": "application/octet-stream, application/pdf, application/json" },
+      headers: { "Accept": "application/octet-stream, application/zip, application/json" },
       credentials: "same-origin"
     }).then(function (response) {
       if (!response.ok) {
@@ -3731,20 +3635,11 @@
       return;
     }
 
-    var requests = [];
-    if (exportFormat === "pdf") {
-      [100, 1000].forEach(function (scale) {
-        requests.push({
-          url: buildExportRequestUrl("pdf", scale),
-          fallback: "kartenausschnitt_M" + String(scale) + ".pdf"
-        });
-      });
-    } else {
-      requests.push({
-        url: buildExportRequestUrl(exportFormat),
-        fallback: "kartenausschnitt." + exportFormat
-      });
-    }
+    var isPdf = exportFormat === "pdf";
+    var requests = [{
+      url: buildExportRequestUrl(exportFormat),
+      fallback: isPdf ? "kartenausschnitt_PDF_A4.zip" : "kartenausschnitt." + exportFormat
+    }];
 
     if (requests.some(function (item) { return !item.url; })) {
       setDownloadStatus("Der Downloadlink konnte nicht erstellt werden.", "error");
@@ -3754,7 +3649,7 @@
     state.ui.exportLoading = true;
     updateViewportIndicators(viewport);
     setDownloadStatus(
-      exportFormat === "pdf" ? "Die zwei PDF-Dateien werden erstellt ..." : exportFormat.toUpperCase() + " wird erstellt ...",
+      isPdf ? "Das PDF-ZIP wird erstellt ..." : exportFormat.toUpperCase() + " wird erstellt ...",
       ""
     );
 
@@ -3763,7 +3658,7 @@
     })).then(function (artifacts) {
       artifacts.forEach(saveExportArtifact);
       setDownloadStatus(
-        exportFormat === "pdf" ? "PDF 1:100 und PDF 1:1000 wurden heruntergeladen." : exportFormat.toUpperCase() + " wurde heruntergeladen.",
+        isPdf ? "Das PDF-ZIP wurde heruntergeladen." : exportFormat.toUpperCase() + " wurde heruntergeladen.",
         ""
       );
     }).catch(function (err) {
@@ -3935,11 +3830,13 @@
 
   function init() {
     bindDom();
+    if (!cfg.initialDatasetPanelOpen) {
+      closeDatasetPanel();
+    }
     syncToolbarVisibility();
     syncInitialBanner();
     bindUiEvents();
     updateDatasetPanelServiceState();
-    updateDatasetPanelMetaText();
 
     if (!dom.map) {
       logError("[OpenLayer] #map fehlt im DOM");
@@ -3979,10 +3876,10 @@
       startActiveStyleRefresh();
 
       if (cfg.ui.showToolbar) {
-        setToast("success", "Karte bereit", "Die Werkzeuge liegen links oben über der Kartenfläche.", 2000);
+        setToast("success", "Karte bereit", "Die Werkzeuge liegen rechts oben über der Kartenfläche.", 2000);
       }
 
-      if (cfg.datasetApiEnabled) {
+      if (cfg.datasetApiEnabled && cfg.initialDatasetPanelOpen) {
         openDatasetPanel();
       }
     }).catch(function (err) {

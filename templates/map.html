@@ -462,7 +462,7 @@
   </noscript>
 
   <!-- Professionelles UI-CSS nach den kritischen Fallback-Regeln laden. -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260729-location-marker-1"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260731-preview-mode-2"/>
 </head>
 <body>
   <!-- Kartenfläche -->
@@ -592,18 +592,6 @@
         <div class="floating-panel__header">
           <div>
             <h2 class="floating-panel__title">Geodaten</h2>
-            <div class="floating-panel__meta" id="dataset-panel-meta">
-              {% if dataset_preview_cfg.available | default(false) %}
-                {{ dataset_preview_cfg.dataset_count | default(0) }} Datensätze erkannt.
-                {% if dataset_preview_cfg.first_dataset_title | default("") %}
-                  Erster Datensatz: {{ dataset_preview_cfg.first_dataset_title }}
-                  {% if initial_dataset_id_cfg %}({{ initial_dataset_id_cfg }}){% endif %}.
-                {% endif %}
-                Es kann immer nur ein Datensatz gleichzeitig eingeblendet werden.
-              {% else %}
-                Es kann immer nur ein Datensatz gleichzeitig eingeblendet werden.
-              {% endif %}
-            </div>
           </div>
           <button
             id="dataset-panel-close"
@@ -636,13 +624,6 @@
           >
             Die Datensatzintegration ist noch nicht vollständig bereit.
             Prüfe <code>/health/ready</code> und die Orchestrator-Verbindung.
-          </p>
-
-          <p
-            id="dataset-panel-limit-note"
-            class="panel-note"
-          >
-            WFS-Daten werden serverseitig begrenzt ausgeliefert, damit große Punkt-, Linien- oder Polygon-Layer die Karte nicht blockieren.
           </p>
 
           <p
@@ -683,9 +664,6 @@
                 {% if not dataset_api_enabled %}disabled{% endif %}
               >
                 <span class="dataset-item__title">Datensatzliste wird vorbereitet</span>
-                <span class="dataset-item__meta">
-                  Die Einträge werden aus <code>{{ datasets_api_url_cfg }}</code> geladen.
-                </span>
               </button>
             </li>
           </ul>
@@ -742,10 +720,6 @@
         <div class="floating-panel__header">
           <div>
             <h2 class="floating-panel__title">Kartenausschnitt herunterladen</h2>
-            <div class="floating-panel__meta" id="download-panel-meta">
-              Zuerst einen Datensatz auswaehlen und mindestens bis Zoomstufe
-              {{ dataset_min_load_zoom | default(14) }} hineinzoomen.
-            </div>
           </div>
           <button
             id="download-panel-close"
@@ -759,14 +733,6 @@
         </div>
 
         <div class="floating-panel__body">
-          <div class="download-coordinate" aria-live="polite">
-            <span class="download-coordinate__label">Projektstandort (WGS84)</span>
-            <strong id="download-coordinate-value">-</strong>
-          </div>
-          <p class="panel-note" id="download-panel-note">
-            DXF und DWG enthalten nur Daten im Radius von {{ dataset_radius_meters | default(400) }} Metern
-            um den Projektstandort. PDF erzeugt zwei A4-Dateien im Massstab 1:100 und 1:1000.
-          </p>
           <div class="download-actions" aria-label="Downloadformate">
             <button class="download-action" type="button" data-export-format="dxf">
               <strong>DXF</strong>
@@ -778,7 +744,7 @@
             </button>
             <button class="download-action download-action--wide" type="button" data-export-format="pdf">
               <strong>PDF A4</strong>
-              <span>1:100 und 1:1000 - zwei Dateien</span>
+              <span>1:100 und 1:1000</span>
             </button>
           </div>
           <p id="download-status" class="download-status" role="status" hidden></p>
@@ -844,7 +810,6 @@
     <li class="dataset-item">
       <button type="button" class="dataset-item__button" data-role="dataset-item-button">
         <span class="dataset-item__title" data-role="dataset-item-title">Datensatz</span>
-        <span class="dataset-item__meta" data-role="dataset-item-meta">Metadaten</span>
         <span class="dataset-item__description" data-role="dataset-item-description" hidden></span>
       </button>
     </li>
@@ -1083,6 +1048,6 @@
   </script>
 
   <!-- Lokales JS -->
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260729-location-marker-1" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260731-preview-mode-2" defer></script>
 </body>
 </html>
