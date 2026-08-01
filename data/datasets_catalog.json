@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "service": "openlayer",
-  "description": "Platzhalter-Katalog für die Datensatzliste im OpenLayer-UI-Service. Diese Datei definiert aktive und inaktive Datensätze, die links oben in der Toolbar angezeigt werden können. Später kann sie durch ein anderes Microservice oder eine HTTP-Quelle ersetzt werden.",
+  "description": "Platzhalter-Katalog für die Datensatzliste im OpenLayer-UI-Service. Diese Datei definiert aktive und inaktive Datensätze, die rechts oben in der Toolbar angezeigt werden können. Später kann sie durch ein anderes Microservice oder eine HTTP-Quelle ersetzt werden.",
   "updated_at": "2026-03-22T00:00:00Z",
   "items": [
     {
