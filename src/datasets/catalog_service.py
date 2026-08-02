@@ -986,15 +986,18 @@ class OpenLayerDatasetCatalogService:
         published_state_summary: Mapping[str, Any],
         catalog_entry: Mapping[str, Any],
     ) -> bool:
-        wfs_url = (
+        service_url = (
             _safe_str(urls.get("wfs_url"))
             or _safe_str(published_state_summary.get("wfs_url"))
             or _safe_str(catalog_entry.get("wfs_url"))
+            or _safe_str(urls.get("wms_url"))
+            or _safe_str(published_state_summary.get("wms_url"))
+            or _safe_str(catalog_entry.get("wms_url"))
         )
 
         return bool(
             _safe_bool(catalog_entry.get("published_known"), False)
-            and wfs_url
+            and service_url
         )
 
     def _resolve_status(
@@ -1029,7 +1032,17 @@ class OpenLayerDatasetCatalogService:
             or _safe_str(published_state_summary.get("wfs_url"))
             or _safe_str(catalog_entry.get("wfs_url"))
         )
-
+        direct_wms_url = (
+            _safe_str(urls.get("wms_url"))
+            or _safe_str(published_state_summary.get("wms_url"))
+            or _safe_str(catalog_entry.get("wms_url"))
+        )
+        wms_layer_name = (
+            _safe_str(urls.get("wms_layer_name"))
+            or _safe_str(published_state_summary.get("wms_layer_name"))
+            or _safe_str(catalog_entry.get("wms_layer_name"))
+        )
+        source_type = "wfs" if direct_wfs_url else "wms" if direct_wms_url else _DEFAULT_SOURCE_TYPE
         max_features = (
             _safe_int(urls.get("wfs_feature_limit"))
             or _safe_int(published_state_summary.get("wfs_feature_limit"))
@@ -1037,16 +1050,24 @@ class OpenLayerDatasetCatalogService:
         )
 
         return {
-            "type": _DEFAULT_SOURCE_TYPE,
-            "format": _DEFAULT_SOURCE_FORMAT,
+            "type": source_type,
+            "format": "image/png" if source_type == "wms" else _DEFAULT_SOURCE_FORMAT,
             "provider": _DEFAULT_SOURCE_PROVIDER,
             "available": source_available,
-            "url": self._build_local_source_url(dataset_id),
+            "url": (
+                direct_wms_url
+                if source_type == "wms"
+                else self._build_local_source_url(dataset_id)
+            ),
+            "layer_name": wms_layer_name,
+            "transparent": True,
             "max_features": max_features,
-            "direct_url": direct_wfs_url,
+            "direct_url": direct_wfs_url or direct_wms_url,
             "orchestrator_wfs_url": direct_wfs_url,
+            "orchestrator_wms_url": direct_wms_url,
             "orchestrator_capabilities_url": (
                 _safe_str(urls.get("capabilities_url"))
+                or _safe_str(urls.get("wms_capabilities_url"))
                 or _safe_str(published_state_summary.get("capabilities_url"))
             ),
             "orchestrator_describe_feature_type_url": (
