@@ -253,6 +253,7 @@
     if (!raw) { return asText(fallback, "placeholder"); }
     if (raw === "geojson" || raw === "json") { return "geojson"; }
     if (raw === "wfs") { return "wfs"; }
+    if (raw === "wms") { return "wms"; }
     if (raw === "placeholder" || raw === "mock" || raw === "demo") { return "placeholder"; }
     return asText(fallback, "placeholder");
   }
@@ -1379,34 +1380,32 @@
         sourceRaw.type,
         raw.source_type,
         raw.sourceType,
-        urls.wfs_url ? "wfs" : ""
+        urls.wfs_url ? "wfs" : (urls.wms_url ? "wms" : "")
       ),
-      hasText(firstText(sourceRaw.url, raw.source_url, raw.sourceUrl, urls.wfs_url)) ? "geojson" : "placeholder"
+      hasText(firstText(sourceRaw.url, raw.source_url, raw.sourceUrl, urls.wfs_url, urls.wms_url))
+        ? (urls.wms_url && !urls.wfs_url ? "wms" : "geojson")
+        : "placeholder"
     );
 
     var sourceFormat = firstText(
       sourceRaw.format,
       raw.source_format,
       raw.sourceFormat,
-      sourceType === "wfs" ? "wfs" : "geojson"
+      sourceType === "wfs" ? "wfs" : (sourceType === "wms" ? "image/png" : "geojson")
     ).toLowerCase();
 
-    // The catalog may still contain a historic max_features=100 value.
-    // Runtime loading is governed by the centrally configured hard cap.
     var configuredLimit = cfg.datasetFeatureLimit;
-
     var sourceUrl = firstText(
       sourceRaw.url,
       raw.source_url,
       raw.sourceUrl,
-      urls.wfs_url,
+      sourceType === "wms" ? urls.wms_url : urls.wfs_url,
       urls.source_url
     );
 
-    if (!sourceUrl && sourceType !== "wfs") {
+    if (!sourceUrl && sourceType !== "wfs" && sourceType !== "wms") {
       sourceUrl = buildDatasetSourceUrl(datasetId);
     }
-
     if (sourceType === "wfs" && hasText(sourceUrl)) {
       sourceUrl = enforceWfsFeatureLimit(sourceUrl, configuredLimit);
     }
@@ -1415,6 +1414,13 @@
       type: sourceType,
       format: sourceFormat || sourceType,
       url: sourceUrl,
+      layerName: firstText(
+        sourceRaw.layer_name,
+        sourceRaw.layerName,
+        urls.wms_layer_name,
+        raw.wms_layer_name
+      ),
+      transparent: asBool(sourceRaw.transparent, true),
       available: asBool(sourceRaw.available, hasText(sourceUrl)),
       featureLimit: configuredLimit,
       originalUrl: firstText(
@@ -1433,6 +1439,9 @@
 
     return {
       wfs_url: firstText(urlsRaw.wfs_url, urlsRaw.wfsUrl, sourceRaw.wfs_url, sourceRaw.wfsUrl),
+      wms_url: firstText(urlsRaw.wms_url, urlsRaw.wmsUrl, sourceRaw.wms_url, sourceRaw.wmsUrl),
+      wms_layer_name: firstText(urlsRaw.wms_layer_name, urlsRaw.wmsLayerName, sourceRaw.wms_layer_name),
+      wcs_url: firstText(urlsRaw.wcs_url, urlsRaw.wcsUrl, sourceRaw.wcs_url, sourceRaw.wcsUrl),
       capabilities_url: firstText(urlsRaw.capabilities_url, urlsRaw.capabilitiesUrl, sourceRaw.capabilities_url),
       describe_feature_type_url: firstText(urlsRaw.describe_feature_type_url, urlsRaw.describeFeatureTypeUrl, sourceRaw.describe_feature_type_url),
       style_url: firstText(urlsRaw.style_url, urlsRaw.styleUrl, sourceRaw.style_url, buildDatasetDetailUrl(datasetId)),
@@ -2400,6 +2409,30 @@
     }, options.immediate ? 0 : VIEWPORT_RELOAD_DELAY_MS);
   }
   function createDatasetLayer(dataset, features) {
+    var sourceConfig = ensureObject(dataset.source);
+    if (normalizeSourceType(sourceConfig.type, "placeholder") === "wms") {
+      var tileSource = new ol.source.TileWMS({
+        url: asText(sourceConfig.url, ""),
+        params: {
+          LAYERS: asText(sourceConfig.layerName, ""),
+          TILED: true,
+          FORMAT: asText(sourceConfig.format, "image/png") || "image/png",
+          TRANSPARENT: asBool(sourceConfig.transparent, true)
+        },
+        crossOrigin: "anonymous",
+        transition: 180
+      });
+      var tileLayer = new ol.layer.Tile({
+        source: tileSource,
+        opacity: 1,
+        visible: true
+      });
+      try { tileLayer.set("layerRole", "dataset"); } catch (_) {}
+      try { tileLayer.set("datasetId", dataset.id); } catch (_) {}
+      try { tileLayer.setZIndex(500); } catch (_) {}
+      return { layer: tileLayer, source: tileSource };
+    }
+
     var source = new ol.source.Vector({
       wrapX: false,
       features: toArray(features)
@@ -3103,6 +3136,12 @@
     }
 
     if (!setDatasetZoomVisibility(viewport)) { return Promise.resolve(false); }
+    if (normalizeSourceType(ensureObject(dataset.source).type, "placeholder") === "wms") {
+      state.datasets.lastViewportKey = viewport.key;
+      state.datasets.lastFeatureCount = 0;
+      updateViewportIndicators(viewport);
+      return Promise.resolve(true);
+    }
 
     if (!options.force && state.datasets.lastViewportKey === viewport.key) {
       return Promise.resolve(false);
@@ -3323,6 +3362,15 @@
       state.datasets.lastViewportKey = "";
       if (options.closePanel !== false) {
         closeDatasetPanel();
+      }
+      if (normalizeSourceType(ensureObject(datasetWithDetails.source).type, "placeholder") === "wms") {
+        setToast(
+          "success",
+          "Rasterdienst aktiv",
+          asText(datasetWithDetails.title, datasetWithDetails.id) + " wird als WMS dargestellt.",
+          3000
+        );
+        return true;
       }
       var viewport = getCurrentViewportContext();
       if (!viewport || viewport.zoom < cfg.datasetMinLoadZoom) {
