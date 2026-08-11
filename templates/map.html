@@ -268,6 +268,41 @@
       font-size: .95em;
     }
 
+    .parcel-selection-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .parcel-selection-action {
+      min-height: 42px;
+      border: 1px solid rgba(15,98,254,.22);
+      border-radius: 10px;
+      background: rgba(15,98,254,.06);
+      color: var(--ol-ui-fg);
+      font: 750 12px/1 var(--ol-ui-font);
+      cursor: pointer;
+    }
+
+    .parcel-selection-action[aria-pressed="true"] {
+      color: #fff;
+      background: var(--ol-ui-accent);
+      border-color: var(--ol-ui-accent);
+    }
+
+    .parcel-selection-action--clear { grid-column: 1 / -1; background: transparent; }
+
+    .parcel-selection-summary {
+      display: grid;
+      gap: 3px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(15,98,254,.08);
+    }
+
+    .parcel-selection-summary strong { color: #0f62fe; font-size: 13px; }
+    .parcel-selection-summary small { color: var(--ol-ui-muted); line-height: 1.35; }
+
     .dataset-list {
       list-style: none;
       margin: 0;
@@ -509,6 +544,25 @@
         {% endif %}
 
         <button
+          id="toolbar-parcels-toggle"
+          class="toolbar-button"
+          type="button"
+          aria-label="Baugrundst&uuml;cke ausw&auml;hlen"
+          aria-controls="parcel-selection-panel"
+          aria-expanded="false"
+          data-action="toggle-parcel-selection"
+          {% if parcel_selection_readonly|default(false) %}disabled{% endif %}
+        >
+          <span class="toolbar-button__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+              <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Zm-7.5-7.5v4h4v-4h-4Zm9 0v4h4v-4h-4Zm-9 9v4h4v-4h-4Zm9 0v4h4v-4h-4Z"/>
+            </svg>
+          </span>
+          <span class="toolbar-button__label">Grundst&uuml;cke</span>
+          <span class="sr-only">Baugrundst&uuml;cke ausw&auml;hlen</span>
+        </button>
+
+        <button
           id="toolbar-editor-toggle"
           class="toolbar-button"
           type="button"
@@ -627,14 +681,6 @@
           </p>
 
           <p
-            id="dataset-panel-loading"
-            class="panel-note"
-            hidden
-          >
-            Datensätze werden geladen …
-          </p>
-
-          <p
             id="dataset-panel-error"
             class="panel-note"
             hidden
@@ -667,6 +713,32 @@
               </button>
             </li>
           </ul>
+        </div>
+      </section>
+
+      <section
+        id="parcel-selection-panel"
+        class="floating-panel"
+        data-role="parcel-selection-panel"
+        aria-labelledby="toolbar-parcels-toggle"
+        hidden
+      >
+        <div class="floating-panel__header">
+          <div>
+            <h2 class="floating-panel__title">WorldEdit-Grundst&uuml;cke</h2>
+            <div class="floating-panel__meta">Projektweite Baumaske</div>
+          </div>
+          <button id="parcel-selection-close" class="floating-panel__close" type="button" aria-label="Grundst&uuml;cksauswahl schlie&szlig;en">&times;</button>
+        </div>
+        <div class="floating-panel__body">
+          <p class="panel-note">Klicke Flurst&uuml;cke direkt an, um sie auszuw&auml;hlen oder abzuw&auml;hlen. Benachbarte Fl&auml;chen bilden gemeinsam eine Baumaske; das Voxelraster bleibt global stabil.</p>
+          <div class="parcel-selection-actions">
+            <button type="button" class="parcel-selection-action parcel-selection-action--clear" data-parcel-clear>Auswahl leeren</button>
+          </div>
+          <div class="parcel-selection-summary">
+            <strong data-parcel-count>0 Grundst&uuml;cke ausgew&auml;hlt</strong>
+            <small data-parcel-status>Bitte einen Polygon-Datensatz ausw&auml;hlen.</small>
+          </div>
         </div>
       </section>
 
@@ -859,6 +931,8 @@
 
           initialDatasetId: {{ (initial_dataset_id_cfg or "") | tojson }},
           initialDatasetTitle: {{ (initial_dataset_title_cfg or "") | tojson }},
+          projectPublicId: {{ (project_public_id or "") | tojson }},
+          parcelSelectionReadonly: {{ (true if parcel_selection_readonly else false) | tojson }},
           datasetCatalogPreview: {{ (dataset_preview_cfg or {}) | tojson }},
           serviceHealth: {{ (service_health_cfg or {}) | tojson }},
           serviceInitSummary: {{ (service_init_summary_cfg or {}) | tojson }},
@@ -911,6 +985,8 @@
           scrollSource: flatConfig.scrollSource,
           initialDatasetId: flatConfig.initialDatasetId,
           initialDatasetTitle: flatConfig.initialDatasetTitle,
+          projectPublicId: flatConfig.projectPublicId,
+          parcelSelectionReadonly: flatConfig.parcelSelectionReadonly,
           datasetCatalogPreview: flatConfig.datasetCatalogPreview,
           serviceHealth: flatConfig.serviceHealth,
           serviceInitSummary: flatConfig.serviceInitSummary,
@@ -1048,6 +1124,6 @@
   </script>
 
   <!-- Lokales JS -->
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260731-preview-mode-2" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260809-project-parcels-3" defer></script>
 </body>
 </html>

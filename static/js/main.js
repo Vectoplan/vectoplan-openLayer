@@ -460,6 +460,8 @@
       initialDatasetId: asText(raw.initialDatasetId, ""),
       initialDatasetTitle: asText(raw.initialDatasetTitle, ""),
       initialDatasetPanelOpen: initialDatasetPanelOpen,
+      projectPublicId: asText(raw.projectPublicId, ""),
+      parcelSelectionReadonly: asBool(raw.parcelSelectionReadonly, false),
 
       datasetCatalogPreview: datasetPreview,
       serviceHealth: serviceHealth,
@@ -498,12 +500,22 @@
       radiusProjectionUnits: cfg.datasetRadiusMeters,
       constraining: false,
       markerOverlay: null,
-      markerElement: null
+      markerElement: null,
+      markerDragging: false
     },
 
     datasetLayer: null,
     datasetSource: null,
     activeDataset: null,
+
+    parcelSelection: {
+      panelOpen: false,
+      mode: "add",
+      byId: {},
+      revision: 0,
+      hydrated: false,
+      defaultCoordinateSelectionDone: false
+    },
 
     datasets: {
       items: [],
@@ -560,6 +572,7 @@
     btnDownload: null,
     btnZoomIn: null,
     btnZoomOut: null,
+    btnParcels: null,
 
     datasetPanel: null,
     datasetPanelLoading: null,
@@ -580,6 +593,12 @@
     downloadPanelClose: null,
     downloadStatus: null,
     downloadActions: [],
+    parcelPanel: null,
+    parcelPanelClose: null,
+    parcelModeButtons: [],
+    parcelClear: null,
+    parcelCount: null,
+    parcelStatus: null,
     statusBanner: null,
     statusBannerText: null,
     statusToast: null,
@@ -601,6 +620,7 @@
     dom.btnDownload = q("#toolbar-download-toggle");
     dom.btnZoomIn = q("#toolbar-zoom-in");
     dom.btnZoomOut = q("#toolbar-zoom-out");
+    dom.btnParcels = q("#toolbar-parcels-toggle");
 
     dom.datasetPanel = q("#dataset-panel");
     dom.datasetPanelLoading = q("#dataset-panel-loading");
@@ -621,6 +641,12 @@
     dom.downloadPanelClose = q("#download-panel-close");
     dom.downloadStatus = q("#download-status");
     dom.downloadActions = qa("[data-export-format]", dom.downloadPanel);
+    dom.parcelPanel = q("#parcel-selection-panel");
+    dom.parcelPanelClose = q("#parcel-selection-close");
+    dom.parcelModeButtons = qa("[data-parcel-mode]", dom.parcelPanel);
+    dom.parcelClear = q("[data-parcel-clear]", dom.parcelPanel);
+    dom.parcelCount = q("[data-parcel-count]", dom.parcelPanel);
+    dom.parcelStatus = q("[data-parcel-status]", dom.parcelPanel);
     dom.statusBanner = q("#map-status-banner");
     dom.statusBannerText = q("#map-status-banner-text");
     dom.statusToast = q("#map-status");
@@ -2177,7 +2203,8 @@
       var coordinateLabel = Number(cfg.lat).toFixed(6) + ", " + Number(cfg.lon).toFixed(6);
       marker.id = "project-location-marker";
       marker.className = "project-location-marker";
-      marker.setAttribute("role", "img");
+      marker.setAttribute("role", cfg.parcelSelectionReadonly ? "img" : "button");
+      marker.setAttribute("tabindex", cfg.parcelSelectionReadonly ? "-1" : "0");
       marker.setAttribute("aria-label", "Zielkoordinate: " + coordinateLabel);
       marker.setAttribute("title", "Zielkoordinate: " + coordinateLabel);
       marker.setAttribute("data-lon", Number(cfg.lon).toFixed(8));
@@ -2193,18 +2220,117 @@
         element: marker,
         position: anchorProjected.slice(),
         positioning: "bottom-center",
-        stopEvent: false,
+        stopEvent: true,
         insertFirst: false
       });
 
       map.addOverlay(overlay);
       state.location.markerOverlay = overlay;
       state.location.markerElement = marker;
+      bindProjectLocationMarkerDrag(map, overlay, marker);
       return overlay;
     } catch (err) {
       logWarn("[OpenLayer] project location marker init failed:", err && err.message ? err.message : err);
       return null;
     }
+  }
+
+  function updateProjectLocation(lonLat, options) {
+    options = options || {};
+    if (!Array.isArray(lonLat) || lonLat.length < 2 || !window.ol || !ol.proj) { return false; }
+    var lon = clamp(numOr(lonLat[0], cfg.lon), -180, 180);
+    var lat = clamp(numOr(lonLat[1], cfg.lat), -90, 90);
+    var projected = ol.proj.fromLonLat([lon, lat]);
+    var projectionScale = Math.max(0.01, Math.abs(Math.cos(lat * Math.PI / 180)));
+
+    cfg.lon = lon;
+    cfg.lat = lat;
+    state.location.anchorLonLat = [lon, lat];
+    state.location.anchorProjected = projected.slice();
+    state.location.radiusProjectionUnits = cfg.datasetRadiusMeters / projectionScale;
+    if (state.location.markerOverlay && options.updateOverlay !== false) {
+      state.location.markerOverlay.setPosition(projected);
+    }
+    if (state.location.markerElement) {
+      var label = lat.toFixed(6) + ", " + lon.toFixed(6);
+      state.location.markerElement.setAttribute("aria-label", "Zielkoordinate: " + label);
+      state.location.markerElement.setAttribute("title", "Zielkoordinate: " + label + (cfg.parcelSelectionReadonly ? "" : " – zum Verschieben ziehen"));
+      state.location.markerElement.setAttribute("data-lon", lon.toFixed(8));
+      state.location.markerElement.setAttribute("data-lat", lat.toFixed(8));
+    }
+    state.datasets.lastViewportKey = "";
+    state.parcelSelection.defaultCoordinateSelectionDone = false;
+
+    if (options.notifyParent !== false) {
+      try {
+        window.parent.postMessage({
+          type: "vectoplan-map:project-coordinate-changed",
+          kind: "vectoplan-map:project-coordinate-changed",
+          source: "vectoplan-openlayer",
+          detail: {
+            projectPublicId: cfg.projectPublicId,
+            longitude: lon,
+            latitude: lat,
+            coordinateSpace: "wgs84"
+          }
+        }, "*");
+      } catch (_) {}
+    }
+
+    scheduleActiveDatasetReload({ immediate: true, force: true, reason: "project-coordinate" });
+    window.setTimeout(function () {
+      autoSelectCoordinateParcel({ force: true });
+    }, VIEWPORT_RELOAD_DELAY_MS + DATASET_BATCH_DELAY_MS);
+    return true;
+  }
+
+  function bindProjectLocationMarkerDrag(map, overlay, marker) {
+    if (cfg.parcelSelectionReadonly || !map || !overlay || !marker) { return; }
+    var pointerId = null;
+
+    function onPointerMove(event) {
+      if (!state.location.markerDragging) { return; }
+      try {
+        if (pointerId !== null && event.pointerId !== undefined && event.pointerId !== pointerId) { return; }
+        event.preventDefault();
+        event.stopPropagation();
+        var coordinate = map.getCoordinateFromPixel(map.getEventPixel(event));
+        if (Array.isArray(coordinate)) { overlay.setPosition(coordinate); }
+      } catch (_) {}
+    }
+
+    function onPointerUp(event) {
+      if (!state.location.markerDragging) { return; }
+      try {
+        if (pointerId !== null && event.pointerId !== undefined && event.pointerId !== pointerId) { return; }
+        event.preventDefault();
+        event.stopPropagation();
+        var position = overlay.getPosition();
+        state.location.markerDragging = false;
+        marker.classList.remove("is-dragging");
+        pointerId = null;
+        if (Array.isArray(position)) {
+          updateProjectLocation(ol.proj.toLonLat(position, state.view ? state.view.getProjection() : undefined));
+        }
+      } catch (_) {
+        state.location.markerDragging = false;
+        marker.classList.remove("is-dragging");
+        pointerId = null;
+      }
+    }
+
+    marker.addEventListener("pointerdown", function (event) {
+      if (event.button !== undefined && event.button !== 0) { return; }
+      event.preventDefault();
+      event.stopPropagation();
+      pointerId = event.pointerId !== undefined ? event.pointerId : null;
+      state.location.markerDragging = true;
+      marker.classList.add("is-dragging");
+      try { marker.setPointerCapture(event.pointerId); } catch (_) {}
+    });
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp, { passive: false });
+    window.addEventListener("pointercancel", onPointerUp, { passive: false });
   }
   function createMap() {
     if (!hasOL()) {
@@ -2268,6 +2394,7 @@
         if (!setDatasetZoomVisibility(getCurrentViewportContext())) { return; }
         scheduleActiveDatasetReload({ reason: "resize" });
       });
+      map.on("singleclick", handleParcelMapClick);
     } catch (_) {}
     if (cfg.styleTokenMismatch) {
       if (state.baseLayers.mapbox) { safeCall(function () { state.baseLayers.mapbox.setVisible(false); }); }
@@ -2408,6 +2535,335 @@
       reloadActiveDatasetForViewport(options).catch(noop);
     }, options.immediate ? 0 : VIEWPORT_RELOAD_DELAY_MS);
   }
+
+  var selectedParcelStyle = null;
+
+  function parcelFeatureId(feature, dataset) {
+    var datasetId = asText(dataset && dataset.id, "dataset") || "dataset";
+    var candidates = [];
+    try { candidates.push(feature && feature.getId ? feature.getId() : ""); } catch (_) {}
+    ["gml_id", "fid", "id", "flurstueck_id", "flstkennz", "alkis_id", "uuid"].forEach(function (name) {
+      candidates.push(getFeatureProperty(feature, name));
+    });
+    var id = firstText.apply(null, candidates);
+    if (!id) {
+      try {
+        var geometry = feature && feature.getGeometry ? feature.getGeometry() : null;
+        var extent = geometry && geometry.getExtent ? geometry.getExtent() : [];
+        id = ensureArray(extent).map(function (value) { return Number(value).toFixed(3); }).join(":");
+      } catch (_) { id = ""; }
+    }
+    return datasetId + ":" + (id || "unknown");
+  }
+
+  function isSelectedParcelFeature(feature, dataset) {
+    return !!state.parcelSelection.byId[parcelFeatureId(feature, dataset)];
+  }
+
+  function getSelectedParcelStyle() {
+    if (selectedParcelStyle) { return selectedParcelStyle; }
+    selectedParcelStyle = new ol.style.Style({
+      fill: new ol.style.Fill({ color: "rgba(15, 98, 254, 0.44)" }),
+      stroke: new ol.style.Stroke({ color: "rgba(4, 66, 190, 1)", width: 3.5 })
+    });
+    return selectedParcelStyle;
+  }
+
+  function parcelSelectionItems() {
+    return Object.keys(state.parcelSelection.byId).sort().map(function (id) {
+      return state.parcelSelection.byId[id];
+    });
+  }
+
+  function parcelCatalogItems() {
+    if (!state.datasetSource || !datasetLooksLikeParcels(state.activeDataset)) { return []; }
+    var catalog = [];
+    try {
+      state.datasetSource.getFeatures().slice(0, 512).forEach(function (feature) {
+        var parcel = parcelFromFeature(feature);
+        if (parcel) { catalog.push(parcel); }
+      });
+    } catch (_) { return []; }
+    return catalog;
+  }
+
+  function postParcelCatalog() {
+    try {
+      window.parent.postMessage({
+        type: "vectoplan-map:parcel-catalog-changed",
+        kind: "vectoplan-map:parcel-catalog-changed",
+        source: "vectoplan-openlayer",
+        detail: {
+          projectPublicId: cfg.projectPublicId,
+          projectCoordinate: { longitude: cfg.lon, latitude: cfg.lat },
+          availableParcels: parcelCatalogItems()
+        }
+      }, "*");
+    } catch (_) {}
+  }
+
+  function updateParcelSelectionUi(message) {
+    var count = parcelSelectionItems().length;
+    setText(dom.parcelCount, count + (count === 1 ? " Grundstueck ausgewaehlt" : " Grundstuecke ausgewaehlt"));
+    setText(dom.parcelStatus, message || (
+      state.activeDataset
+        ? "Klick auf ein Flurstueck waehlt es aus oder ab."
+        : "Bitte einen Polygon-Datensatz auswaehlen."
+    ));
+    toArray(dom.parcelModeButtons).forEach(function (button) {
+      setPressed(button, asText(button.getAttribute("data-parcel-mode"), "") === state.parcelSelection.mode);
+    });
+    if (dom.btnParcels) {
+      dom.btnParcels.dataset.count = String(count);
+      setPressed(dom.btnParcels, state.parcelSelection.panelOpen);
+      setExpanded(dom.btnParcels, state.parcelSelection.panelOpen);
+    }
+  }
+
+  function postParcelSelection() {
+    var detail = {
+      projectPublicId: cfg.projectPublicId,
+      coordinateSpace: "wgs84",
+      coveragePolicy: "cell-contained",
+      revision: ++state.parcelSelection.revision,
+      projectCoordinate: {
+        longitude: cfg.lon,
+        latitude: cfg.lat
+      },
+      parcels: parcelSelectionItems()
+    };
+    try {
+      window.parent.postMessage({
+        type: "vectoplan-map:parcel-selection-changed",
+        kind: "vectoplan-map:parcel-selection-changed",
+        source: "vectoplan-openlayer",
+        detail: detail
+      }, "*");
+    } catch (_) {}
+    try { if (state.datasetLayer) { state.datasetLayer.changed(); } } catch (_) {}
+    updateParcelSelectionUi();
+  }
+
+  function datasetLooksLikeParcels(dataset) {
+    var item = ensureObject(dataset);
+    var text = [item.id, item.title, item.name, item.slug, item.key].map(function (value) {
+      return asText(value, "").toLowerCase();
+    }).join(" ");
+    return text.indexOf("flurst") >= 0 || text.indexOf("parcel") >= 0 || text.indexOf("alkis") >= 0;
+  }
+
+  function autoSelectCoordinateParcel(options) {
+    options = options || {};
+    if (!state.datasetSource || !state.activeDataset || !datasetLooksLikeParcels(state.activeDataset)) { return false; }
+    if (!state.parcelSelection.hydrated && !options.force) { return false; }
+    if (state.parcelSelection.defaultCoordinateSelectionDone && !options.force) { return false; }
+    if (!options.force && (state.parcelSelection.revision > 0 || parcelSelectionItems().length > 0)) {
+      state.parcelSelection.defaultCoordinateSelectionDone = true;
+      return false;
+    }
+    var coordinate = state.location.anchorProjected;
+    if (!Array.isArray(coordinate)) { return false; }
+    var candidates = [];
+    var nearestCandidates = [];
+    try {
+      state.datasetSource.getFeatures().forEach(function (feature) {
+        var geometry = feature && feature.getGeometry ? feature.getGeometry() : null;
+        if (!geometry) { return; }
+        var parcel = parcelFromFeature(feature);
+        if (!parcel) { return; }
+        var area = typeof geometry.getArea === "function" ? numOr(geometry.getArea(), Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+        if (typeof geometry.intersectsCoordinate === "function" && geometry.intersectsCoordinate(coordinate)) {
+          candidates.push({ parcel: parcel, area: area, distance: 0 });
+          return;
+        }
+        if (typeof geometry.getClosestPoint === "function") {
+          var closest = geometry.getClosestPoint(coordinate);
+          if (!Array.isArray(closest) || closest.length < 2) { return; }
+          var dx = Number(closest[0]) - Number(coordinate[0]);
+          var dy = Number(closest[1]) - Number(coordinate[1]);
+          var distance = Math.sqrt(dx * dx + dy * dy);
+          if (Number.isFinite(distance)) {
+            nearestCandidates.push({ parcel: parcel, area: area, distance: distance });
+          }
+        }
+      });
+    } catch (_) { candidates = []; }
+    // A project coordinate can lie on a road or exactly on a cadastral border.
+    // Select the closest visible parcel within a bounded tolerance in that
+    // case instead of leaving the map without an initial selection.
+    if (!candidates.length && nearestCandidates.length) {
+      nearestCandidates.sort(function (left, right) {
+        return left.distance === right.distance ? left.area - right.area : left.distance - right.distance;
+      });
+      var nearestTolerance = Math.min(100, Math.max(15, cfg.datasetRadiusMeters * 0.15));
+      if (nearestCandidates[0].distance <= nearestTolerance) {
+        candidates.push(nearestCandidates[0]);
+      }
+    }
+    if (!candidates.length) {
+      state.parcelSelection.defaultCoordinateSelectionDone = true;
+      return false;
+    }
+    candidates.sort(function (left, right) {
+      return left.distance === right.distance ? left.area - right.area : left.distance - right.distance;
+    });
+    var selected = candidates[0].parcel;
+    var alreadySelected = !!state.parcelSelection.byId[selected.parcelId];
+    state.parcelSelection.byId[selected.parcelId] = selected;
+    state.parcelSelection.defaultCoordinateSelectionDone = true;
+    if (!alreadySelected && !cfg.parcelSelectionReadonly) {
+      postParcelSelection();
+    } else {
+      try { if (state.datasetLayer) { state.datasetLayer.changed(); } } catch (_) {}
+      updateParcelSelectionUi();
+    }
+    return true;
+  }
+
+  function primitiveFeatureProperties(feature) {
+    var result = {};
+    try {
+      var properties = feature && feature.getProperties ? feature.getProperties() : {};
+      Object.keys(ensureObject(properties)).sort().slice(0, 24).forEach(function (key) {
+        if (key === "geometry") { return; }
+        var value = properties[key];
+        if (["string", "number", "boolean"].indexOf(typeof value) >= 0 || value == null) {
+          result[key] = value;
+        }
+      });
+    } catch (_) {}
+    return result;
+  }
+
+  function parcelFromFeature(feature) {
+    if (!feature || !state.activeDataset || !state.view) { return null; }
+    try {
+      var geometry = feature.getGeometry ? feature.getGeometry() : null;
+      var geometryType = geometry && geometry.getType ? geometry.getType() : "";
+      if (geometryType !== "Polygon" && geometryType !== "MultiPolygon") { return null; }
+      var formatter = new ol.format.GeoJSON();
+      var geojson = formatter.writeFeatureObject(feature, {
+        featureProjection: state.view.getProjection(),
+        dataProjection: "EPSG:4326"
+      });
+      if (!geojson || !geojson.geometry) { return null; }
+      var id = parcelFeatureId(feature, state.activeDataset);
+      return {
+        parcelId: id,
+        datasetId: asText(state.activeDataset.id, ""),
+        geometry: cloneJson(geojson.geometry, {}),
+        properties: primitiveFeatureProperties(feature)
+      };
+    } catch (error) {
+      logWarn("[OpenLayer] parcel serialization failed:", error && error.message ? error.message : error);
+      return null;
+    }
+  }
+
+  function handleParcelMapClick(event) {
+    if (cfg.parcelSelectionReadonly || !state.map || !state.datasetLayer || !datasetLooksLikeParcels(state.activeDataset)) { return; }
+    var hit = null;
+    try {
+      hit = state.map.forEachFeatureAtPixel(event.pixel, function (feature, layer) {
+        return layer === state.datasetLayer ? feature : null;
+      }, { hitTolerance: 3, layerFilter: function (layer) { return layer === state.datasetLayer; } });
+    } catch (_) { hit = null; }
+    // Rendering-based hit detection can miss thin or mostly transparent
+    // polygons. Fall back to the actual cadastral geometry at the click.
+    if (!hit && state.datasetSource && Array.isArray(event.coordinate)) {
+      try {
+        var directCandidates = [];
+        state.datasetSource.getFeatures().forEach(function (feature) {
+          var geometry = feature && feature.getGeometry ? feature.getGeometry() : null;
+          if (!geometry || typeof geometry.intersectsCoordinate !== "function" || !geometry.intersectsCoordinate(event.coordinate)) { return; }
+          directCandidates.push({
+            feature: feature,
+            area: typeof geometry.getArea === "function" ? numOr(geometry.getArea(), Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER
+          });
+        });
+        directCandidates.sort(function (left, right) { return left.area - right.area; });
+        hit = directCandidates.length ? directCandidates[0].feature : null;
+      } catch (_) { hit = null; }
+    }
+    if (!hit) {
+      updateParcelSelectionUi("Kein Grundstueck unter dem Mauszeiger gefunden.");
+      return;
+    }
+    var parcel = parcelFromFeature(hit);
+    if (!parcel) {
+      updateParcelSelectionUi("Der aktive Datensatz enthaelt an dieser Stelle kein Polygon.");
+      return;
+    }
+    if (state.parcelSelection.byId[parcel.parcelId]) {
+      delete state.parcelSelection.byId[parcel.parcelId];
+    } else {
+      state.parcelSelection.byId[parcel.parcelId] = parcel;
+    }
+    postParcelSelection();
+  }
+
+  function syncParcelSelection(value) {
+    var root = ensureObject(value);
+    var selection = ensureObject(root.detail || root.selection || root.last_map_selection || root);
+    var incomingProjectId = asText(selection.projectPublicId || selection.project_public_id, "");
+    if (cfg.projectPublicId && incomingProjectId && cfg.projectPublicId !== incomingProjectId) { return; }
+    var incomingRevision = numOr(selection.revision, 0);
+    if (
+      state.parcelSelection.hydrated
+      && incomingRevision < state.parcelSelection.revision
+    ) {
+      return;
+    }
+    var next = {};
+    ensureArray(selection.parcels || selection.features).slice(0, 64).forEach(function (entry) {
+      var parcel = ensureObject(entry);
+      var parcelId = asText(parcel.parcelId || parcel.parcel_id || parcel.id, "");
+      var geometry = ensureObject(parcel.geometry);
+      if (!parcelId || ["Polygon", "MultiPolygon"].indexOf(asText(geometry.type, "")) < 0) { return; }
+      next[parcelId] = {
+        parcelId: parcelId,
+        datasetId: asText(parcel.datasetId || parcel.dataset_id, ""),
+        geometry: cloneJson(geometry, {}),
+        properties: cloneObject(parcel.properties, {})
+      };
+    });
+    state.parcelSelection.byId = next;
+    state.parcelSelection.revision = incomingRevision;
+    state.parcelSelection.hydrated = true;
+    state.parcelSelection.defaultCoordinateSelectionDone = Object.keys(next).length > 0;
+    try { if (state.datasetLayer) { state.datasetLayer.changed(); } } catch (_) {}
+    updateParcelSelectionUi();
+    window.setTimeout(function () { autoSelectCoordinateParcel(); }, 0);
+  }
+
+  function requestParcelSelection() {
+    try {
+      window.parent.postMessage({
+        type: "vectoplan-map:parcel-selection-request",
+        kind: "vectoplan-map:parcel-selection-request",
+        source: "vectoplan-openlayer",
+        detail: { projectPublicId: cfg.projectPublicId }
+      }, "*");
+    } catch (_) {}
+  }
+
+  function bindParcelSelectionBridge() {
+    window.addEventListener("message", function (event) {
+      var message = ensureObject(event.data);
+      if (asText(message.type || message.kind, "") !== "vectoplan-app:parcel-selection-sync") { return; }
+      syncParcelSelection(message.detail || message.selection || message);
+    });
+    requestParcelSelection();
+    // The map is also usable directly and older embedding shells may not yet
+    // answer the state request. Do not let that optional handshake block the
+    // coordinate parcel forever.
+    window.setTimeout(function () {
+      if (state.parcelSelection.hydrated) { return; }
+      state.parcelSelection.hydrated = true;
+      autoSelectCoordinateParcel();
+    }, 500);
+  }
+
   function createDatasetLayer(dataset, features) {
     var sourceConfig = ensureObject(dataset.source);
     if (normalizeSourceType(sourceConfig.type, "placeholder") === "wms") {
@@ -2449,6 +2905,10 @@
           state.activeDataset &&
           asText(state.activeDataset.id, "") === asText(dataset.id, "")
         ) ? state.activeDataset : dataset;
+
+        if (isSelectedParcelFeature(feature, currentDataset)) {
+          return getSelectedParcelStyle();
+        }
 
         try {
           var geom = feature && feature.getGeometry ? feature.getGeometry() : null;
@@ -2752,8 +3212,15 @@
 
     var list = Array.isArray(items) ? items : [];
     var targetId = "";
+    var explicitDatasetId = false;
+    try { explicitDatasetId = new URLSearchParams(window.location.search || "").has("dataset_id"); } catch (_) {}
+    var parcelDataset = list.find(function (item) { return datasetLooksLikeParcels(item); });
 
-    if (hasText(cfg.initialDatasetId)) {
+    if (explicitDatasetId && hasText(cfg.initialDatasetId)) {
+      targetId = cfg.initialDatasetId;
+    } else if (parcelDataset) {
+      targetId = asText(parcelDataset.id, "");
+    } else if (hasText(cfg.initialDatasetId)) {
       targetId = cfg.initialDatasetId;
     } else if (list.length === 1) {
       targetId = asText(list[0].id, "");
@@ -3110,13 +3577,8 @@
     updateEditorButtonState();
     setDatasetZoomVisibility(getCurrentViewportContext());
 
-    if (!options.silent) {
-      setToast(
-        warning ? "danger" : "success",
-        warning ? "Ausschnitt begrenzt" : "Datensatz aktiv",
-        warning || (asText(dataset.title, dataset.id) + " wurde ausgewaehlt."),
-        warning ? 4200 : 2400
-      );
+    if (!options.silent && warning) {
+      setToast("danger", "Ausschnitt begrenzt", warning, 4200);
     }
 
     if (wasEditorActive && !replacingCurrent) {
@@ -3201,6 +3663,8 @@
         loadedFeatureCount += batchFeatures.length;
         finalWarning = asText(result.warning, finalWarning);
         state.datasets.lastFeatureCount = loadedFeatureCount;
+        autoSelectCoordinateParcel();
+        postParcelCatalog();
 
         var nextOffset = clamp(numOr(result.nextOffset, offset + batchFeatures.length), 0, cfg.datasetFeatureLimit);
         var hasMore = asBool(result.hasMore, false)
@@ -3217,14 +3681,8 @@
         }
 
         state.datasets.lastViewportKey = viewport.key;
-        if (options.notify) {
-          setToast(
-            "success",
-            "Datensatz geladen",
-            finalWarning || (String(loadedFeatureCount) + " Features wurden schrittweise geladen."),
-            finalWarning ? 4200 : 2600
-          );
-        }
+        autoSelectCoordinateParcel();
+        postParcelCatalog();
         updateViewportIndicators(viewport);
         return true;
       });
@@ -3345,13 +3803,8 @@
       if (options.closePanel !== false) {
         closeDatasetPanel();
       }
-      if (!options.silentIfAlreadyActive) {
-        setToast("success", "Datensatz", asText(item.title, item.id) + " ist bereits aktiv.", 2200);
-      }
       return;
     }
-
-    setToast("success", "Datensatz", asText(item.title, item.id) + " wird geladen …", 0);
 
     fetchDatasetDetails(item, false).then(function (datasetWithDetails) {
       applyDataset(datasetWithDetails, {
@@ -3364,25 +3817,13 @@
         closeDatasetPanel();
       }
       if (normalizeSourceType(ensureObject(datasetWithDetails.source).type, "placeholder") === "wms") {
-        setToast(
-          "success",
-          "Rasterdienst aktiv",
-          asText(datasetWithDetails.title, datasetWithDetails.id) + " wird als WMS dargestellt.",
-          3000
-        );
         return true;
       }
       var viewport = getCurrentViewportContext();
       if (!viewport || viewport.zoom < cfg.datasetMinLoadZoom) {
-        setToast(
-          "success",
-          "Datensatz ausgewaehlt",
-          "Daten werden ab Zoomstufe " + String(cfg.datasetMinLoadZoom) + " im " + String(cfg.datasetRadiusMeters) + "-m-Radius geladen.",
-          3600
-        );
         return false;
       }
-      return reloadActiveDatasetForViewport({ force: true, notify: true, reason: "selection" });
+      return reloadActiveDatasetForViewport({ force: true, notify: false, reason: "selection" });
     }).catch(function (err) {
       logError("[OpenLayer] selectDataset failed:", err && err.message ? err.message : err);
       setToast("danger", "Datensatz", "Der Datensatz konnte nicht verarbeitet werden.", 3800);
@@ -3723,6 +4164,7 @@
     if (!cfg.datasetExportEnabled || !state.activeDataset) { return; }
     closeDatasetPanel();
     closeEditorPanel();
+    closeParcelSelectionPanel();
     state.ui.downloadPanelOpen = true;
     setHidden(dom.downloadPanel, false);
     setExpanded(dom.btnDownload, true);
@@ -3744,6 +4186,7 @@
   function openDatasetPanel() {
     closeDownloadPanel();
     closeEditorPanel();
+    closeParcelSelectionPanel();
     state.ui.datasetPanelOpen = true;
     setHidden(dom.datasetPanel, false);
     setExpanded(dom.btnDatasets, true);
@@ -3765,6 +4208,7 @@
     if (openOnly) {
       closeDatasetPanel();
       closeDownloadPanel();
+      closeParcelSelectionPanel();
     }
     state.ui.editorPanelOpen = !!openOnly;
     setHidden(dom.editorPanel, !openOnly);
@@ -3775,10 +4219,53 @@
     openEditorPanel(false);
   }
 
+  function openParcelSelectionPanel() {
+    if (cfg.parcelSelectionReadonly) { return; }
+    closeDatasetPanel();
+    closeDownloadPanel();
+    closeEditorPanel();
+    state.parcelSelection.panelOpen = true;
+    setHidden(dom.parcelPanel, false);
+    updateParcelSelectionUi();
+  }
+
+  function closeParcelSelectionPanel() {
+    state.parcelSelection.panelOpen = false;
+    setHidden(dom.parcelPanel, true);
+    updateParcelSelectionUi();
+  }
+
+  function toggleParcelSelectionPanel() {
+    if (state.parcelSelection.panelOpen) { closeParcelSelectionPanel(); }
+    else { openParcelSelectionPanel(); }
+  }
+
   function bindUiEvents() {
     if (dom.btnDatasets) {
       dom.btnDatasets.addEventListener("click", function () {
         toggleDatasetPanel();
+      });
+    }
+
+    if (dom.btnParcels) {
+      dom.btnParcels.addEventListener("click", toggleParcelSelectionPanel);
+    }
+
+    if (dom.parcelPanelClose) {
+      dom.parcelPanelClose.addEventListener("click", closeParcelSelectionPanel);
+    }
+
+    toArray(dom.parcelModeButtons).forEach(function (button) {
+      button.addEventListener("click", function () {
+        state.parcelSelection.mode = asText(button.getAttribute("data-parcel-mode"), "add") === "remove" ? "remove" : "add";
+        updateParcelSelectionUi();
+      });
+    });
+
+    if (dom.parcelClear) {
+      dom.parcelClear.addEventListener("click", function () {
+        state.parcelSelection.byId = {};
+        postParcelSelection();
       });
     }
 
@@ -3810,6 +4297,7 @@
     if (dom.downloadPanelClose) {
       dom.downloadPanelClose.addEventListener("click", function () {
         closeDownloadPanel();
+        closeParcelSelectionPanel();
       });
     }
 
@@ -3852,6 +4340,7 @@
 
     updateEditorButtonState();
     updateViewportIndicators();
+    updateParcelSelectionUi();
   }
 
   function syncToolbarVisibility() {
@@ -3884,6 +4373,7 @@
     syncToolbarVisibility();
     syncInitialBanner();
     bindUiEvents();
+    bindParcelSelectionBridge();
     updateDatasetPanelServiceState();
 
     if (!dom.map) {
@@ -3927,8 +4417,13 @@
         setToast("success", "Karte bereit", "Die Werkzeuge liegen rechts oben über der Kartenfläche.", 2000);
       }
 
-      if (cfg.datasetApiEnabled && cfg.initialDatasetPanelOpen) {
-        openDatasetPanel();
+      if (cfg.datasetApiEnabled) {
+        // Loading the preferred parcel layer must not depend on whether the
+        // catalogue drawer starts open.
+        loadDatasetsIntoPanel(false).catch(noop);
+        if (cfg.initialDatasetPanelOpen) {
+          openDatasetPanel();
+        }
       }
     }).catch(function (err) {
       logError("[OpenLayer] OpenLayers konnte nicht geladen werden:", err && err.message ? err.message : err);
