@@ -355,17 +355,30 @@
     var enableWheelZoom = asBool(raw.enableWheelZoom, !disableScroll) && !disableScroll;
 
     var preserveInitialView = false;
+    var compactViewport = false;
     var initialDatasetPanelOpen = true;
 
     try {
+      compactViewport = Boolean(
+        window.matchMedia
+        && window.matchMedia("(max-width: 640px)").matches
+      );
       var initialSearchParams = new URLSearchParams(window.location.search || "");
       preserveInitialView = initialSearchParams.has("lon") && initialSearchParams.has("lat");
       var initialPanel = asText(initialSearchParams.get("initial_panel"), "").toLowerCase();
       var presentationMode = asText(initialSearchParams.get("mode"), "").toLowerCase();
-      initialDatasetPanelOpen = presentationMode !== "preview" && ["none", "closed", "hidden"].indexOf(initialPanel) === -1;
+      var initialPanelExplicitlyOpen = ["dataset", "datasets", "open"].indexOf(initialPanel) !== -1;
+      initialDatasetPanelOpen = (
+        presentationMode !== "preview"
+        && initialPanelExplicitlyOpen
+      ) || (
+          presentationMode !== "preview"
+          && !compactViewport
+          && ["none", "closed", "hidden"].indexOf(initialPanel) === -1
+      );
     } catch (_) {
       preserveInitialView = false;
-      initialDatasetPanelOpen = true;
+      initialDatasetPanelOpen = !compactViewport;
     }
 
     var token = asText(raw.token, "");
@@ -501,7 +514,10 @@
       constraining: false,
       markerOverlay: null,
       markerElement: null,
-      markerDragging: false
+      markerDragging: false,
+      manualOverride: false,
+      pendingLocalCoordinate: null,
+      pendingLocalCoordinateUntil: 0
     },
 
     datasetLayer: null,
@@ -2248,6 +2264,13 @@
     state.location.anchorLonLat = [lon, lat];
     state.location.anchorProjected = projected.slice();
     state.location.radiusProjectionUnits = cfg.datasetRadiusMeters / projectionScale;
+    if (Object.prototype.hasOwnProperty.call(options, "manualOverride")) {
+      state.location.manualOverride = asBool(options.manualOverride, false);
+    }
+    if (options.localChange === true) {
+      state.location.pendingLocalCoordinate = [lon, lat];
+      state.location.pendingLocalCoordinateUntil = nowMs() + 15000;
+    }
     if (state.location.markerOverlay && options.updateOverlay !== false) {
       state.location.markerOverlay.setPosition(projected);
     }
@@ -2271,16 +2294,21 @@
             projectPublicId: cfg.projectPublicId,
             longitude: lon,
             latitude: lat,
-            coordinateSpace: "wgs84"
+            coordinateSpace: "wgs84",
+            projectCoordinateManualOverride: state.location.manualOverride
           }
         }, "*");
       } catch (_) {}
     }
 
-    scheduleActiveDatasetReload({ immediate: true, force: true, reason: "project-coordinate" });
-    window.setTimeout(function () {
-      autoSelectCoordinateParcel({ force: true });
-    }, VIEWPORT_RELOAD_DELAY_MS + DATASET_BATCH_DELAY_MS);
+    if (options.reloadDataset !== false) {
+      scheduleActiveDatasetReload({ immediate: true, force: true, reason: "project-coordinate" });
+    }
+    if (options.autoSelect !== false) {
+      window.setTimeout(function () {
+        autoSelectCoordinateParcel({ force: true });
+      }, VIEWPORT_RELOAD_DELAY_MS + DATASET_BATCH_DELAY_MS);
+    }
     return true;
   }
 
@@ -2310,7 +2338,10 @@
         marker.classList.remove("is-dragging");
         pointerId = null;
         if (Array.isArray(position)) {
-          updateProjectLocation(ol.proj.toLonLat(position, state.view ? state.view.getProjection() : undefined));
+          updateProjectLocation(
+            ol.proj.toLonLat(position, state.view ? state.view.getProjection() : undefined),
+            { manualOverride: true, localChange: true }
+          );
         }
       } catch (_) {
         state.location.markerDragging = false;
@@ -2596,6 +2627,7 @@
         detail: {
           projectPublicId: cfg.projectPublicId,
           projectCoordinate: { longitude: cfg.lon, latitude: cfg.lat },
+          projectCoordinateManualOverride: state.location.manualOverride,
           availableParcels: parcelCatalogItems()
         }
       }, "*");
@@ -2630,6 +2662,7 @@
         longitude: cfg.lon,
         latitude: cfg.lat
       },
+      projectCoordinateManualOverride: state.location.manualOverride,
       parcels: parcelSelectionItems()
     };
     try {
@@ -2813,6 +2846,52 @@
       && incomingRevision < state.parcelSelection.revision
     ) {
       return;
+    }
+    var incomingCoordinate = ensureObject(selection.projectCoordinate || selection.project_coordinate);
+    var incomingLongitudeValue = incomingCoordinate.longitude != null
+      ? incomingCoordinate.longitude
+      : (incomingCoordinate.lon != null ? incomingCoordinate.lon : incomingCoordinate.lng);
+    var incomingLatitudeValue = incomingCoordinate.latitude != null
+      ? incomingCoordinate.latitude
+      : incomingCoordinate.lat;
+    var incomingLongitude = incomingLongitudeValue == null ? NaN : Number(incomingLongitudeValue);
+    var incomingLatitude = incomingLatitudeValue == null ? NaN : Number(incomingLatitudeValue);
+    var incomingManualOverride = selection.projectCoordinateManualOverride;
+    if (incomingManualOverride == null) {
+      incomingManualOverride = selection.project_coordinate_manual_override;
+    }
+    var pendingCoordinate = state.location.pendingLocalCoordinate;
+    var pendingActive = Array.isArray(pendingCoordinate)
+      && state.location.pendingLocalCoordinateUntil > nowMs();
+    if (!pendingActive) {
+      state.location.pendingLocalCoordinate = null;
+      state.location.pendingLocalCoordinateUntil = 0;
+    }
+    var pendingMatchesIncoming = pendingActive
+      && Number.isFinite(incomingLongitude)
+      && Number.isFinite(incomingLatitude)
+      && Math.abs(incomingLongitude - pendingCoordinate[0]) <= 1e-8
+      && Math.abs(incomingLatitude - pendingCoordinate[1]) <= 1e-8;
+    if (pendingMatchesIncoming) {
+      state.location.pendingLocalCoordinate = null;
+      state.location.pendingLocalCoordinateUntil = 0;
+      pendingActive = false;
+    }
+    var coordinateSyncBlocked = state.location.markerDragging
+      || (pendingActive && !pendingMatchesIncoming);
+    if (!coordinateSyncBlocked && incomingManualOverride != null) {
+      state.location.manualOverride = asBool(incomingManualOverride, false);
+    }
+    if (!coordinateSyncBlocked && Number.isFinite(incomingLongitude) && Number.isFinite(incomingLatitude)) {
+      var coordinateChanged = Math.abs(incomingLongitude - cfg.lon) > 1e-10
+        || Math.abs(incomingLatitude - cfg.lat) > 1e-10;
+      if (coordinateChanged) {
+        updateProjectLocation([incomingLongitude, incomingLatitude], {
+          notifyParent: false,
+          autoSelect: false,
+          manualOverride: state.location.manualOverride
+        });
+      }
     }
     var next = {};
     ensureArray(selection.parcels || selection.features).slice(0, 64).forEach(function (entry) {
