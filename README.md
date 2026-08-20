@@ -1,4 +1,37 @@
 # vectoplan-openLayer
+
+`vectoplan-openLayer` ist die Karten- und Geodatenoberfläche des
+Projekt-Workspaces. Neben dem viewportbegrenzten Laden verwaltet sie die
+interaktive Flurstücksauswahl und die Projektkoordinate. Der serviceübergreifende
+Vertrag ist unter
+[`../vectoplan-editor/docs/PARCEL_GRID_AND_WORLDEDIT.md`](../vectoplan-editor/docs/PARCEL_GRID_AND_WORLDEDIT.md)
+dokumentiert.
+
+## Flurstücksauswahl und Projektkoordinate
+
+- Ist `flurstuecke` vorhanden, wird dieser Datensatz beim Öffnen bevorzugt.
+- Das Polygon an der Projektkoordinate wird nach dem Laden automatisch
+  ausgewählt und kräftiger blau dargestellt.
+- Ein Klick auf ein Flurstück schaltet seine Auswahl ein oder aus.
+- Im bearbeitbaren Projektmodus kann der Marker gezogen werden. Die neue
+  Koordinate löst einen Datensatz-Reload und eine erneute Koordinatenauswahl aus.
+- Auswahl und Katalog werden mit monotoner Revision an den Workspace-Bridge
+  veröffentlicht; Map und WorldEdit-Flurstückswerkzeug bearbeiten denselben
+  Zustand.
+- Im Readonly-/öffentlichen Modus bleibt der Marker sichtbar, aber nicht
+  verschiebbar.
+- Routinemeldungen wie „Datensatz wird geladen“ oder „flurstuecke wird geladen“
+  werden nicht als Toast oder Panel eingeblendet.
+
+Browserverträge:
+
+```text
+vectoplan-map:parcel-catalog-changed
+vectoplan-map:parcel-selection-changed
+vectoplan-map:parcel-selection-request
+vectoplan-map:project-coordinate-changed
+```
+
 ## Viewport loading and downloads
 
 Only the currently selected dataset is requested. Geometry requests always contain the
@@ -7,9 +40,10 @@ at 1,000 features. The API also removes geometry outside the actual circle.
 Large results are transferred to the browser and rendered progressively in batches of
 100 features, while the overall hard limit remains 1,000 features.
 
-The project coordinate is the fixed reference for navigation and downloads:
+The project coordinate is the reference for navigation and downloads. In an
+editable project it can be moved with the map marker:
 
-- A visible map pin marks the project coordinate supplied when the map is opened.
+- A visible, draggable map pin marks the current project coordinate.
 - Map panning is constrained to 400 m around the project coordinate.
 - DXF and DWG contain the selected dataset inside the 400 m radius.
 - PDF creates two separate A4 downloads at 1:100 and 1:1000.

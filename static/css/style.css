@@ -111,11 +111,20 @@ body::-webkit-scrollbar {
 .project-location-marker {
   width: 40px;
   height: 52px;
-  pointer-events: none;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
   user-select: none;
   transform: translateY(-2px);
   filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.34));
   z-index: 2200;
+}
+
+.project-location-marker.is-dragging { cursor: grabbing; }
+
+.project-location-marker[tabindex="-1"] {
+  pointer-events: none;
+  cursor: default;
 }
 
 .project-location-marker__icon {

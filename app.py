@@ -1032,6 +1032,8 @@ def create_app(test_config: Mapping[str, Any] | None = None) -> Flask:
     except Exception:
         pass
 
+    from vectoplan_i18n import init_app as init_i18n
+    init_i18n(app)
     return app
 
 

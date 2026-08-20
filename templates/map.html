@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="color-scheme" content="light"/>
-  <title>OpenLayer Map</title>
+  <title data-i18n="vectoplan.server.openlayer.map.title.openlayer_map.1b066621">OpenLayer Map</title>
 
   {# Zentrale UI-Flags mit robusten Defaults #}
   {% set ui_cfg = ui if ui is defined and ui else {} %}
@@ -268,6 +268,41 @@
       font-size: .95em;
     }
 
+    .parcel-selection-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .parcel-selection-action {
+      min-height: 42px;
+      border: 1px solid rgba(15,98,254,.22);
+      border-radius: 10px;
+      background: rgba(15,98,254,.06);
+      color: var(--ol-ui-fg);
+      font: 750 12px/1 var(--ol-ui-font);
+      cursor: pointer;
+    }
+
+    .parcel-selection-action[aria-pressed="true"] {
+      color: #fff;
+      background: var(--ol-ui-accent);
+      border-color: var(--ol-ui-accent);
+    }
+
+    .parcel-selection-action--clear { grid-column: 1 / -1; background: transparent; }
+
+    .parcel-selection-summary {
+      display: grid;
+      gap: 3px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(15,98,254,.08);
+    }
+
+    .parcel-selection-summary strong { color: #0f62fe; font-size: 13px; }
+    .parcel-selection-summary small { color: var(--ol-ui-muted); line-height: 1.35; }
+
     .dataset-list {
       list-style: none;
       margin: 0;
@@ -466,7 +501,7 @@
 </head>
 <body>
   <!-- Kartenfläche -->
-  <div id="map" role="application" aria-label="Karte"></div>
+  <div id="map" role="application" aria-label="Karte" data-i18n-aria-label="server.openlayer.map.div_aria-label.karte.6dd808c3"></div>
 
   <!-- UI-Shell -->
   <div
@@ -486,7 +521,7 @@
   >
     {% if show_toolbar %}
     <div class="toolbar-stack" id="toolbar-stack" data-role="toolbar-stack">
-      <div class="toolbar-group" aria-label="Kartenwerkzeuge">
+      <div class="toolbar-group" aria-label="Kartenwerkzeuge" data-i18n-aria-label="server.openlayer.map.div_aria-label.kartenwerkzeuge.303ea552">
         {% if show_dataset_button %}
         <button
           id="toolbar-datasets-toggle"
@@ -497,16 +532,35 @@
           aria-expanded="true"
           data-action="toggle-datasets"
           {% if not dataset_api_enabled %}disabled{% endif %}
-        >
+         data-i18n-aria-label="server.openlayer.map.button_aria-label.datensatzliste_ffnen.986bb6d5">
           <span class="toolbar-button__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
               <path d="M4 6.75A1.75 1.75 0 0 1 5.75 5h12.5A1.75 1.75 0 0 1 20 6.75v1.5A1.75 1.75 0 0 1 18.25 10H5.75A1.75 1.75 0 0 1 4 8.25v-1.5Zm1.75-.25a.25.25 0 0 0-.25.25v1.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-1.5a.25.25 0 0 0-.25-.25H5.75Zm-1.75 8A1.75 1.75 0 0 1 5.75 12h12.5A1.75 1.75 0 0 1 20 13.75v1.5A1.75 1.75 0 0 1 18.25 17H5.75A1.75 1.75 0 0 1 4 15.25v-1.5Zm1.75-.25a.25.25 0 0 0-.25.25v1.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-1.5a.25.25 0 0 0-.25-.25H5.75Z"/>
             </svg>
           </span>
-          <span class="toolbar-button__label">Datensätze</span>
-          <span class="sr-only">Datensatzliste</span>
+          <span class="toolbar-button__label" data-i18n="vectoplan.server.openlayer.map.span.datens_tze.6a43fe77">Datensätze</span>
+          <span class="sr-only" data-i18n="vectoplan.server.openlayer.map.span.datensatzliste.1324c6e3">Datensatzliste</span>
         </button>
         {% endif %}
+
+        <button
+          id="toolbar-parcels-toggle"
+          class="toolbar-button"
+          type="button"
+          aria-label="Baugrundst&uuml;cke ausw&auml;hlen"
+          aria-controls="parcel-selection-panel"
+          aria-expanded="false"
+          data-action="toggle-parcel-selection"
+          {% if parcel_selection_readonly|default(false) %}disabled{% endif %}
+         data-i18n-aria-label="server.openlayer.map.button_aria-label.baugrundst_cke_ausw_hlen.10c32967">
+          <span class="toolbar-button__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+              <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Zm-7.5-7.5v4h4v-4h-4Zm9 0v4h4v-4h-4Zm-9 9v4h4v-4h-4Zm9 0v4h4v-4h-4Z"/>
+            </svg>
+          </span>
+          <span class="toolbar-button__label"><span data-i18n="vectoplan.server.openlayer.map.span.grundst.c7b05f20">Grundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke.27a1ebc5">cke</span></span>
+          <span class="sr-only"><span data-i18n="vectoplan.server.openlayer.map.span.baugrundst.2fdc2fe6">Baugrundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke_ausw.bba64227">cke ausw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen.631b5781">hlen</span></span>
+        </button>
 
         <button
           id="toolbar-editor-toggle"
@@ -519,14 +573,14 @@
           data-action="toggle-editor"
           {% if not show_editor_button %}hidden{% endif %}
           {% if not editor_enabled %}disabled{% endif %}
-        >
+         data-i18n-aria-label="server.openlayer.map.button_aria-label.editor_ein_oder_ausschalten.2b1098f5">
           <span class="toolbar-button__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
               <path d="M15.02 5.27 18.73 9l-9.9 9.9-4.23.52.52-4.23 9.9-9.92Zm.87-1.41a2 2 0 0 1 2.83 0l1.4 1.4a2 2 0 0 1 0 2.83l-.33.34-3.72-3.72.35-.34Z"/>
             </svg>
           </span>
-          <span class="toolbar-button__label">Editor</span>
-          <span class="sr-only">Editor</span>
+          <span class="toolbar-button__label" data-i18n="vectoplan.server.openlayer.map.span.editor.a6ec6658">Editor</span>
+          <span class="sr-only" data-i18n="vectoplan.server.openlayer.map.span.editor.a2f03c8a">Editor</span>
         </button>
 
         <button
@@ -538,14 +592,14 @@
           aria-expanded="false"
           data-action="toggle-downloads"
           disabled
-        >
+         data-i18n-aria-label="server.openlayer.map.button_aria-label.downloads_fuer_die_aktuelle_kartenkoor.e3460c07">
           <span class="toolbar-button__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
               <path d="M11.25 4.75a.75.75 0 0 1 1.5 0v8.19l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.75ZM5.5 16a.75.75 0 0 1 .75.75v1.75h11.5v-1.75a.75.75 0 0 1 1.5 0v2.5a.75.75 0 0 1-.75.75h-13a.75.75 0 0 1-.75-.75v-2.5A.75.75 0 0 1 5.5 16Z"/>
             </svg>
           </span>
-          <span class="toolbar-button__label">Download</span>
-          <span class="sr-only">Daten herunterladen</span>
+          <span class="toolbar-button__label" data-i18n="vectoplan.server.openlayer.map.span.download.6b153233">Download</span>
+          <span class="sr-only" data-i18n="vectoplan.server.openlayer.map.span.daten_herunterladen.bf3174ec">Daten herunterladen</span>
         </button>
 
         {% if show_zoom_buttons %}
@@ -555,14 +609,14 @@
           type="button"
           aria-label="Hineinzoomen"
           data-action="zoom-in"
-        >
+         data-i18n-aria-label="server.openlayer.map.button_aria-label.hineinzoomen.cd741194">
           <span class="toolbar-button__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
               <path d="M11.25 5.25a.75.75 0 0 1 1.5 0v5h5a.75.75 0 0 1 0 1.5h-5v5a.75.75 0 0 1-1.5 0v-5h-5a.75.75 0 0 1 0-1.5h5v-5Z"/>
             </svg>
           </span>
-          <span class="toolbar-button__label">Plus</span>
-          <span class="sr-only">Zoom plus</span>
+          <span class="toolbar-button__label" data-i18n="vectoplan.server.openlayer.map.span.plus.88a353be">Plus</span>
+          <span class="sr-only" data-i18n="vectoplan.server.openlayer.map.span.zoom_plus.cc2b8fc2">Zoom plus</span>
         </button>
 
         <button
@@ -571,14 +625,14 @@
           type="button"
           aria-label="Herauszoomen"
           data-action="zoom-out"
-        >
+         data-i18n-aria-label="server.openlayer.map.button_aria-label.herauszoomen.a0f3dd0c">
           <span class="toolbar-button__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
               <path d="M6.25 11.25a.75.75 0 0 1 0-1.5h11.5a.75.75 0 0 1 0 1.5H6.25Z"/>
             </svg>
           </span>
-          <span class="toolbar-button__label">Minus</span>
-          <span class="sr-only">Zoom minus</span>
+          <span class="toolbar-button__label" data-i18n="vectoplan.server.openlayer.map.span.minus.2a6d533f">Minus</span>
+          <span class="sr-only" data-i18n="vectoplan.server.openlayer.map.span.zoom_minus.d3a83c57">Zoom minus</span>
         </button>
         {% endif %}
       </div>
@@ -591,7 +645,7 @@
       >
         <div class="floating-panel__header">
           <div>
-            <h2 class="floating-panel__title">Geodaten</h2>
+            <h2 class="floating-panel__title" data-i18n="vectoplan.server.openlayer.map.h2.geodaten.bb81c5d7">Geodaten</h2>
           </div>
           <button
             id="dataset-panel-close"
@@ -599,7 +653,7 @@
             type="button"
             aria-label="Datensatzliste schließen"
             data-action="close-datasets"
-          >
+           data-i18n-aria-label="server.openlayer.map.button_aria-label.datensatzliste_schlie_en.bf1b2ef3">
             ✕
           </button>
         </div>
@@ -609,7 +663,7 @@
             id="dataset-panel-disabled-note"
             class="panel-note"
             {% if dataset_api_enabled %}hidden{% endif %}
-          >
+           data-i18n="vectoplan.server.openlayer.map.p.die_datensatzliste_ist_aktuell_nicht_a.d310185f">
             Die Datensatzliste ist aktuell nicht aktiviert.
           </p>
 
@@ -621,24 +675,16 @@
               and service_health_cfg.dataset_catalog_service_available | default(false)
               and service_health_cfg.dataset_source_service_available | default(false)
             ) %}hidden{% endif %}
-          >
+          ><span data-i18n="vectoplan.server.openlayer.map.span.die_datensatzintegration_ist_noch_nich.3435a151">
             Die Datensatzintegration ist noch nicht vollständig bereit.
-            Prüfe <code>/health/ready</code> und die Orchestrator-Verbindung.
-          </p>
-
-          <p
-            id="dataset-panel-loading"
-            class="panel-note"
-            hidden
-          >
-            Datensätze werden geladen …
-          </p>
+            Prüfe </span><code>/health/ready</code><span data-i18n="vectoplan.server.openlayer.map.span.und_die_orchestrator_verbindung.80c608ba"> und die Orchestrator-Verbindung.
+          </span></p>
 
           <p
             id="dataset-panel-error"
             class="panel-note"
             hidden
-          >
+           data-i18n="vectoplan.server.openlayer.map.p.die_datensatzliste_konnte_nicht_gelade.158700ed">
             Die Datensatzliste konnte nicht geladen werden.
           </p>
 
@@ -646,7 +692,7 @@
             id="dataset-panel-empty"
             class="panel-note"
             hidden
-          >
+           data-i18n="vectoplan.server.openlayer.map.p.es_wurden_keine_passenden_datens_tze_g.f3e104ba">
             Es wurden keine passenden Datensätze gefunden.
           </p>
 
@@ -655,7 +701,7 @@
             class="dataset-list"
             data-role="dataset-list"
             aria-label="Datensatzliste"
-          >
+           data-i18n-aria-label="server.openlayer.map.ul_aria-label.datensatzliste.3bcaf820">
             <li class="dataset-item">
               <button
                 type="button"
@@ -663,10 +709,36 @@
                 data-role="dataset-placeholder"
                 {% if not dataset_api_enabled %}disabled{% endif %}
               >
-                <span class="dataset-item__title">Datensatzliste wird vorbereitet</span>
+                <span class="dataset-item__title" data-i18n="vectoplan.server.openlayer.map.span.datensatzliste_wird_vorbereitet.e6f8705d">Datensatzliste wird vorbereitet</span>
               </button>
             </li>
           </ul>
+        </div>
+      </section>
+
+      <section
+        id="parcel-selection-panel"
+        class="floating-panel"
+        data-role="parcel-selection-panel"
+        aria-labelledby="toolbar-parcels-toggle"
+        hidden
+      >
+        <div class="floating-panel__header">
+          <div>
+            <h2 class="floating-panel__title"><span data-i18n="vectoplan.server.openlayer.map.span.worldedit_grundst.b60f24dd">WorldEdit-Grundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke.5383e509">cke</span></h2>
+            <div class="floating-panel__meta" data-i18n="vectoplan.server.openlayer.map.div.projektweite_baumaske.53d2822e">Projektweite Baumaske</div>
+          </div>
+          <button id="parcel-selection-close" class="floating-panel__close" type="button" aria-label="Grundst&uuml;cksauswahl schlie&szlig;en" data-i18n-aria-label="server.openlayer.map.button_aria-label.grundst_cksauswahl_schlie_en.4fe9e8c5">&times;</button>
+        </div>
+        <div class="floating-panel__body">
+          <p class="panel-note"><span data-i18n="vectoplan.server.openlayer.map.span.klicke_flurst.b20ac5de">Klicke Flurst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke_direkt_an_um_sie_auszuw.6b37bed6">cke direkt an, um sie auszuw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen_oder_abzuw.7e34d6e2">hlen oder abzuw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen_benachbarte_fl.dbf73239">hlen. Benachbarte Fl</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.chen_bilden_gemeinsam_eine_baumaske_da.8f71a531">chen bilden gemeinsam eine Baumaske; das Voxelraster bleibt global stabil.</span></p>
+          <div class="parcel-selection-actions">
+            <button type="button" class="parcel-selection-action parcel-selection-action--clear" data-parcel-clear data-i18n="vectoplan.server.openlayer.map.button.auswahl_leeren.10f7aa21">Auswahl leeren</button>
+          </div>
+          <div class="parcel-selection-summary">
+            <strong data-parcel-count><span data-i18n="vectoplan.server.openlayer.map.span.0_grundst.e925efc2">0 Grundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke_ausgew.8130d83c">cke ausgew</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlt.8f399f65">hlt</span></strong>
+            <small data-parcel-status><span data-i18n="vectoplan.server.openlayer.map.span.bitte_einen_polygon_datensatz_ausw.f1f331b2">Bitte einen Polygon-Datensatz ausw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen.7ad0236b">hlen.</span></small>
+          </div>
         </div>
       </section>
 
@@ -679,8 +751,8 @@
       >
         <div class="floating-panel__header">
           <div>
-            <h2 class="floating-panel__title">Editor</h2>
-            <div class="floating-panel__meta" id="editor-panel-meta">
+            <h2 class="floating-panel__title" data-i18n="vectoplan.server.openlayer.map.h2.editor.c34f6999">Editor</h2>
+            <div class="floating-panel__meta" id="editor-panel-meta" data-i18n="vectoplan.server.openlayer.map.div.punkte_und_linien_k_nnen_sp_ter_direkt.886b7b6b">
               Punkte und Linien können später direkt über den Editor ergänzt und bearbeitet werden.
             </div>
           </div>
@@ -690,22 +762,22 @@
             type="button"
             aria-label="Editorpanel schließen"
             data-action="close-editor"
-          >
+           data-i18n-aria-label="server.openlayer.map.button_aria-label.editorpanel_schlie_en.7a8af608">
             ✕
           </button>
         </div>
 
         <div class="floating-panel__body">
-          <p class="panel-note" id="editor-panel-note">
+          <p class="panel-note" id="editor-panel-note" data-i18n="vectoplan.server.openlayer.map.p.der_editor_arbeitet_in_diesem_ausbaust.b99867a0">
             Der Editor arbeitet in diesem Ausbaustand zunächst auf dem aktuell gewählten Datensatz in der Benutzeroberfläche.
             Die spätere Übergabe an den GeoServer-Orchestrator wird als separater Schritt ergänzt.
           </p>
 
           <ul class="editor-hint-list">
-            <li>Immer nur ein aktiver Datensatz gleichzeitig.</li>
-            <li>Der Editor soll nur aktiv sein, wenn der Datensatz editierbar ist.</li>
-            <li>Punkte und Linien stehen im Fokus; Attribute werden später ergänzt.</li>
-            <li>Die eigentliche Persistenz läuft später kontrolliert über den Orchestrator.</li>
+            <li data-i18n="vectoplan.server.openlayer.map.li.immer_nur_ein_aktiver_datensatz_gleich.1dbba035">Immer nur ein aktiver Datensatz gleichzeitig.</li>
+            <li data-i18n="vectoplan.server.openlayer.map.li.der_editor_soll_nur_aktiv_sein_wenn_de.35108d0d">Der Editor soll nur aktiv sein, wenn der Datensatz editierbar ist.</li>
+            <li data-i18n="vectoplan.server.openlayer.map.li.punkte_und_linien_stehen_im_fokus_attr.3606bab6">Punkte und Linien stehen im Fokus; Attribute werden später ergänzt.</li>
+            <li data-i18n="vectoplan.server.openlayer.map.li.die_eigentliche_persistenz_l_uft_sp_te.34d0eeb1">Die eigentliche Persistenz läuft später kontrolliert über den Orchestrator.</li>
           </ul>
         </div>
       </section>
@@ -719,7 +791,7 @@
       >
         <div class="floating-panel__header">
           <div>
-            <h2 class="floating-panel__title">Kartenausschnitt herunterladen</h2>
+            <h2 class="floating-panel__title" data-i18n="vectoplan.server.openlayer.map.h2.kartenausschnitt_herunterladen.8f2199c0">Kartenausschnitt herunterladen</h2>
           </div>
           <button
             id="download-panel-close"
@@ -727,24 +799,24 @@
             type="button"
             aria-label="Downloadpanel schliessen"
             data-action="close-downloads"
-          >
+           data-i18n="vectoplan.server.openlayer.map.button.x.dbfa2f72" data-i18n-aria-label="server.openlayer.map.button_aria-label.downloadpanel_schliessen.2e645325">
             x
           </button>
         </div>
 
         <div class="floating-panel__body">
-          <div class="download-actions" aria-label="Downloadformate">
+          <div class="download-actions" aria-label="Downloadformate" data-i18n-aria-label="server.openlayer.map.div_aria-label.downloadformate.69e81525">
             <button class="download-action" type="button" data-export-format="dxf">
-              <strong>DXF</strong>
-              <span>{{ dataset_radius_meters | default(400) }}-m-Radius</span>
+              <strong data-i18n="vectoplan.server.openlayer.map.strong.dxf.a0cb3961">DXF</strong>
+              <span>{{ dataset_radius_meters | default(400) }}<span data-i18n="vectoplan.server.openlayer.map.span.m_radius.ed23838c">-m-Radius</span></span>
             </button>
             <button class="download-action" type="button" data-export-format="dwg">
-              <strong>DWG</strong>
-              <span>{{ dataset_radius_meters | default(400) }}-m-Radius</span>
+              <strong data-i18n="vectoplan.server.openlayer.map.strong.dwg.88fabea2">DWG</strong>
+              <span>{{ dataset_radius_meters | default(400) }}<span data-i18n="vectoplan.server.openlayer.map.span.m_radius.6df6a76c">-m-Radius</span></span>
             </button>
             <button class="download-action download-action--wide" type="button" data-export-format="pdf">
-              <strong>PDF A4</strong>
-              <span>1:100 und 1:1000</span>
+              <strong data-i18n="vectoplan.server.openlayer.map.strong.pdf_a4.424af51f">PDF A4</strong>
+              <span data-i18n="vectoplan.server.openlayer.map.span.1_100_und_1_1000.0e45c685">1:100 und 1:1000</span>
             </button>
           </div>
           <p id="download-status" class="download-status" role="status" hidden></p>
@@ -762,26 +834,26 @@
       {% if not server_error and not style_token_mismatch %}hidden{% endif %}
     >
       <p class="floating-banner__title">
-        {% if server_error %}
+        {% if server_error %}<span data-i18n="vectoplan.server.openlayer.map.span.kartenoberfl_che_mit_server_fallback.8c0062ad">
           Kartenoberfläche mit Server-Fallback
-        {% elif style_token_mismatch %}
+        </span>{% elif style_token_mismatch %}<span data-i18n="vectoplan.server.openlayer.map.span.mapbox_stil_ben_tigt_token.990032fc">
           Mapbox-Stil benötigt Token
-        {% else %}
+        </span>{% else %}<span data-i18n="vectoplan.server.openlayer.map.span.karte_initialisiert.b125a341">
           Karte initialisiert
-        {% endif %}
+        </span>{% endif %}
       </p>
       <p class="floating-banner__text" id="map-status-banner-text">
-        {% if server_error %}
+        {% if server_error %}<span data-i18n="vectoplan.server.openlayer.map.span.beim_rendern_der_kartenansicht_ist_ein.3e66f033">
           Beim Rendern der Kartenansicht ist ein Fehler aufgetreten:
-          <strong>{{ server_error_msg | default("unknown_error") }}</strong>
-          {% if server_error_detail %} ({{ server_error_detail }}){% endif %}.
+          </span><strong>{{ server_error_msg | default("unknown_error") }}</strong>
+          {% if server_error_detail %} ({{ server_error_detail }}){% endif %}<span data-i18n="vectoplan.server.openlayer.map.span.die_oberfl_che_wurde_mit_sicheren_fall.dbf8328a">.
           Die Oberfläche wurde mit sicheren Fallback-Werten geladen.
-        {% elif style_token_mismatch %}
-          Für den gewählten Stil <strong>{{ style_id | default("mapbox/light-v11") }}</strong>
+        </span>{% elif style_token_mismatch %}<span data-i18n="vectoplan.server.openlayer.map.span.f_r_den_gew_hlten_stil.63d431fe">
+          Für den gewählten Stil </span><strong>{{ style_id | default("mapbox/light-v11") }}</strong><span data-i18n="vectoplan.server.openlayer.map.span.wird_ein_mapbox_token_ben_tigt_die_cli.45ee8ce3">
           wird ein Mapbox-Token benötigt. Die Client-Logik kann auf einen Fallback wechseln.
-        {% else %}
+        </span>{% else %}<span data-i18n="vectoplan.server.openlayer.map.span.die_kartenoberfl_che_wurde_initialisie.f57fe88d">
           Die Kartenoberfläche wurde initialisiert.
-        {% endif %}
+        </span>{% endif %}
       </p>
     </div>
 
@@ -793,13 +865,13 @@
       aria-live="polite"
       hidden
     >
-      <p class="floating-status__title" id="map-status-title">Status</p>
-      <p class="floating-status__text" id="map-status-text">Bereit.</p>
+      <p class="floating-status__title" id="map-status-title" data-i18n="vectoplan.server.openlayer.map.p.status.a49270d5">Status</p>
+      <p class="floating-status__text" id="map-status-text" data-i18n="vectoplan.server.openlayer.map.p.bereit.b92b5e19">Bereit.</p>
     </div>
   </div>
 
   <noscript>
-    <div class="no-js">
+    <div class="no-js" data-i18n="vectoplan.server.openlayer.map.div.javascript_ist_deaktiviert_die_karte_b.638016b9">
       JavaScript ist deaktiviert. Die Karte benötigt JavaScript, um die Datensatzliste,
       den Editor und die Interaktionen bereitzustellen.
     </div>
@@ -809,7 +881,7 @@
   <template id="dataset-item-template">
     <li class="dataset-item">
       <button type="button" class="dataset-item__button" data-role="dataset-item-button">
-        <span class="dataset-item__title" data-role="dataset-item-title">Datensatz</span>
+        <span class="dataset-item__title" data-role="dataset-item-title" data-i18n="vectoplan.server.openlayer.map.span.datensatz.54a87e33">Datensatz</span>
         <span class="dataset-item__description" data-role="dataset-item-description" hidden></span>
       </button>
     </li>
@@ -859,6 +931,8 @@
 
           initialDatasetId: {{ (initial_dataset_id_cfg or "") | tojson }},
           initialDatasetTitle: {{ (initial_dataset_title_cfg or "") | tojson }},
+          projectPublicId: {{ (project_public_id or "") | tojson }},
+          parcelSelectionReadonly: {{ (true if parcel_selection_readonly else false) | tojson }},
           datasetCatalogPreview: {{ (dataset_preview_cfg or {}) | tojson }},
           serviceHealth: {{ (service_health_cfg or {}) | tojson }},
           serviceInitSummary: {{ (service_init_summary_cfg or {}) | tojson }},
@@ -911,6 +985,8 @@
           scrollSource: flatConfig.scrollSource,
           initialDatasetId: flatConfig.initialDatasetId,
           initialDatasetTitle: flatConfig.initialDatasetTitle,
+          projectPublicId: flatConfig.projectPublicId,
+          parcelSelectionReadonly: flatConfig.parcelSelectionReadonly,
           datasetCatalogPreview: flatConfig.datasetCatalogPreview,
           serviceHealth: flatConfig.serviceHealth,
           serviceInitSummary: flatConfig.serviceInitSummary,
@@ -1048,6 +1124,6 @@
   </script>
 
   <!-- Lokales JS -->
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260731-preview-mode-2" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260818-mobile-panel-1" defer></script>
 </body>
 </html>

@@ -491,6 +491,8 @@ def _fallback_context() -> dict[str, Any]:
         "dataset_feature_limit": 1000,
         "dataset_radius_meters": 400,
         "dataset_export_enabled": True,
+        "project_public_id": "",
+        "parcel_selection_readonly": False,
         "dataset_export_url_template": "/api/datasets/{dataset_id}/export",
         "datasets_api_url": "/api/datasets?include_style_details=1&include_invalid=0",
         "datasets_api_url_base": "/api/datasets",
@@ -617,6 +619,13 @@ def _build_context(settings: Settings) -> dict[str, Any]:
         requested_dataset_id = _safe_str(request.args.get("dataset_id"), "").strip()
         initial_dataset_id = requested_dataset_id or _safe_str(dataset_catalog_preview.get("first_dataset_id"), "").strip()
         initial_dataset_title = _safe_str(dataset_catalog_preview.get("first_dataset_title"), "").strip()
+        project_public_id = _safe_str(
+            request.args.get("project_public_id")
+            or request.args.get("app_project_public_id")
+            or request.args.get("project_id"),
+            "",
+        ).strip()[:160]
+        parcel_selection_readonly = bool(_parse_boolish(request.args.get("readonly")) or False)
 
         context: dict[str, Any] = {
             # Kartenkonfiguration
@@ -657,6 +666,8 @@ def _build_context(settings: Settings) -> dict[str, Any]:
             "dataset_catalog_preview": dataset_catalog_preview,
             "initial_dataset_id": initial_dataset_id,
             "initial_dataset_title": initial_dataset_title,
+            "project_public_id": project_public_id,
+            "parcel_selection_readonly": parcel_selection_readonly,
 
             # Service-Diagnostik für spätere JS-Ausbaustufen
             "service_health": service_health,
