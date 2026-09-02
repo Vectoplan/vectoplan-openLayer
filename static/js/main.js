@@ -346,8 +346,8 @@
   function normalizeConfig(raw) {
     raw = raw || {};
 
-    var lon = clamp(numOr(raw.lon, 11.576124), -180, 180);
-    var lat = clamp(numOr(raw.lat, 48.137154), -90, 90);
+    var lon = clamp(numOr(raw.lon, 13.405), -180, 180);
+    var lat = clamp(numOr(raw.lat, 52.52), -90, 90);
     var minZoom = clamp(numOr(raw.minZoom, 0), 0, 22);
     var maxZoom = clamp(numOr(raw.maxZoom, 22), minZoom, 22);
     var zoom = clamp(numOr(raw.zoom, 14), minZoom, maxZoom);

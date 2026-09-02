@@ -52,8 +52,8 @@ DEFAULT_OPENLAYER_CSP_ENABLED = True
 DEFAULT_OPENLAYER_REMOVE_X_FRAME_OPTIONS_ON_EMBED = True
 DEFAULT_OPENLAYER_X_FRAME_OPTIONS_DEFAULT = "SAMEORIGIN"
 
-DEFAULT_LON = 11.576124
-DEFAULT_LAT = 48.137154
+DEFAULT_LON = 13.405
+DEFAULT_LAT = 52.52
 DEFAULT_ZOOM = 17
 DEFAULT_MIN_ZOOM = 0
 DEFAULT_MAX_ZOOM = 22
@@ -218,6 +218,8 @@ class Settings:
             "FLASK_DEBUG": self.flask_debug,
             "ALLOWED_ORIGINS": list(self.allowed_origins),
             "MAPBOX_TOKEN": self.mapbox_token,
+            "MAPBOX_ACCESS_TOKEN": self.mapbox_token,
+            "VECTOPLAN_MAPBOX_TOKEN": self.mapbox_token,
 
             # Public / iframe integration
             "OPENLAYER_PUBLIC_URL": self.openlayer_public_url,
@@ -881,8 +883,11 @@ def get_settings() -> Settings:
 
     mapbox_token = _first_non_blank(
         env,
-        "MAPBOX_TOKEN",
+        "VECTOPLAN_OPENLAYER_MAPBOX_ACCESS_TOKEN",
+        "VECTOPLAN_OPENLAYER_MAPBOX_TOKEN",
+        "VECTOPLAN_MAPBOX_TOKEN",
         "MAPBOX_ACCESS_TOKEN",
+        "MAPBOX_TOKEN",
     ) or ""
 
     openlayer_public_url = _normalize_url(

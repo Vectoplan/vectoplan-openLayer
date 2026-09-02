@@ -268,7 +268,7 @@ def _collect_readiness(settings: Settings) -> dict[str, Any]:
     mapbox_ready = True
     if style_requires_token and not token_present:
         mapbox_ready = False
-        notes.append("Mapbox-Style konfiguriert, aber MAPBOX_TOKEN fehlt")
+        notes.append("Mapbox-Style konfiguriert, aber Mapbox-Token fehlt")
 
     dataset_advisory: dict[str, Any] = {
         "enabled": settings.dataset_api_enabled,
