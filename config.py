@@ -2,14 +2,18 @@
 import os
 
 # Mapbox
-MAPBOX_TOKEN = os.getenv(
-    "MAPBOX_TOKEN",
-    "XXXX",
+MAPBOX_TOKEN = (
+    os.getenv("VECTOPLAN_OPENLAYER_MAPBOX_ACCESS_TOKEN")
+    or os.getenv("VECTOPLAN_OPENLAYER_MAPBOX_TOKEN")
+    or os.getenv("VECTOPLAN_MAPBOX_TOKEN")
+    or os.getenv("MAPBOX_ACCESS_TOKEN")
+    or os.getenv("MAPBOX_TOKEN")
+    or ""
 )
 
 # Startansicht
-DEFAULT_LON = float(os.getenv("DEFAULT_LON", "11.576124"))  # München
-DEFAULT_LAT = float(os.getenv("DEFAULT_LAT", "48.137154"))
+DEFAULT_LON = float(os.getenv("DEFAULT_LON", "13.405"))  # Berlin
+DEFAULT_LAT = float(os.getenv("DEFAULT_LAT", "52.52"))
 DEFAULT_ZOOM = int(os.getenv("DEFAULT_ZOOM", "17"))
 
 # UI

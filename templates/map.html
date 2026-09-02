@@ -894,8 +894,8 @@
         var flatConfig = {
           token: {{ (mapbox_token or "") | tojson }},
           styleId: {{ (style_id or "mapbox/light-v11") | tojson }},
-          lon: {{ (lon if lon is defined else 11.576124) | tojson }},
-          lat: {{ (lat if lat is defined else 48.137154) | tojson }},
+          lon: {{ (lon if lon is defined else 13.405) | tojson }},
+          lat: {{ (lat if lat is defined else 52.52) | tojson }},
           zoom: {{ (zoom if zoom is defined else 17) | tojson }},
           minZoom: {{ (min_zoom if min_zoom is defined else 0) | tojson }},
           maxZoom: {{ (max_zoom if max_zoom is defined else 22) | tojson }},
@@ -1055,8 +1055,8 @@
         window.OPENLAYER_CONFIG = Object.freeze({
           token: "",
           styleId: "mapbox/light-v11",
-          lon: 11.576124,
-          lat: 48.137154,
+          lon: 13.405,
+          lat: 52.52,
           zoom: 17,
           minZoom: 0,
           maxZoom: 22,

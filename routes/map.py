@@ -475,8 +475,8 @@ def _fallback_context() -> dict[str, Any]:
     """
     return {
         "mapbox_token": "",
-        "lon": 11.576124,
-        "lat": 48.137154,
+        "lon": 13.405,
+        "lat": 52.52,
         "zoom": 17,
         "min_zoom": 0,
         "max_zoom": 22,
@@ -545,8 +545,8 @@ def _build_context(settings: Settings) -> dict[str, Any]:
     server_error_detail = ""
 
     try:
-        map_default_lon = float(getattr(settings, "map_default_lon", 11.576124))
-        map_default_lat = float(getattr(settings, "map_default_lat", 48.137154))
+        map_default_lon = float(getattr(settings, "map_default_lon", 13.405))
+        map_default_lat = float(getattr(settings, "map_default_lat", 52.52))
         map_default_zoom = int(getattr(settings, "map_default_zoom", 17))
         map_min_zoom = int(getattr(settings, "map_min_zoom", 0))
         map_max_zoom = int(getattr(settings, "map_max_zoom", 22))
