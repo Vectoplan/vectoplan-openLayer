@@ -283,6 +283,12 @@
   // ───────────────────────────────────────────────────────────
 
   var OL_VERSION = "10.6.1";
+  var OLMS_VERSION = "12.4.0";
+  var OPENFREEMAP_STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
+  var BASEMAP_TIMEOUT_MS = 12000;
+  var MAP_DESIGNS = window.VectoplanBasemap.designs;
+  var OPENFREEMAP_ATTRIBUTION = window.VectoplanBasemap.attribution;
+  var MAP_DESIGN_STORAGE_KEY = window.VectoplanBasemap.storageKey;
   var OLE_VERSION = "2.4.5";
   var DEFAULT_SCRIPT_TIMEOUT_MS = 25000;
   var DEFAULT_CONDITION_TIMEOUT_MS = 12000;
@@ -503,15 +509,14 @@
     view: null,
     baseLayers: {
       mapbox: null,
+      openfreemap: null,
       osm: null,
-      usingFallbackOsm: false
+      provider: null
     },
 
     location: {
       anchorLonLat: [cfg.lon, cfg.lat],
       anchorProjected: null,
-      radiusProjectionUnits: cfg.datasetRadiusMeters,
-      constraining: false,
       markerOverlay: null,
       markerElement: null,
       markerDragging: false,
@@ -525,8 +530,8 @@
     activeDataset: null,
 
     parcelSelection: {
-      panelOpen: false,
-      mode: "add",
+      layer: null,
+      source: null,
       byId: {},
       revision: 0,
       hydrated: false,
@@ -548,6 +553,8 @@
       viewportTimer: null,
       requestController: null,
       requestSerial: 0,
+      requestViewportKey: "",
+      catalogKey: "",
       lastFeatureCount: 0,
       lastViewportKey: "",
       loading: false,
@@ -574,6 +581,7 @@
       datasetPanelOpen: cfg.initialDatasetPanelOpen,
       editorPanelOpen: false,
       downloadPanelOpen: false,
+      mapDesignPanelOpen: false,
       exportLoading: false
     }
   };
@@ -588,7 +596,7 @@
     btnDownload: null,
     btnZoomIn: null,
     btnZoomOut: null,
-    btnParcels: null,
+    btnMapDesign: null,
 
     datasetPanel: null,
     datasetPanelLoading: null,
@@ -609,12 +617,9 @@
     downloadPanelClose: null,
     downloadStatus: null,
     downloadActions: [],
-    parcelPanel: null,
-    parcelPanelClose: null,
-    parcelModeButtons: [],
-    parcelClear: null,
-    parcelCount: null,
-    parcelStatus: null,
+    mapDesignPanel: null,
+    mapDesignPanelClose: null,
+    mapDesignOptions: [],
     statusBanner: null,
     statusBannerText: null,
     statusToast: null,
@@ -636,7 +641,7 @@
     dom.btnDownload = q("#toolbar-download-toggle");
     dom.btnZoomIn = q("#toolbar-zoom-in");
     dom.btnZoomOut = q("#toolbar-zoom-out");
-    dom.btnParcels = q("#toolbar-parcels-toggle");
+    dom.btnMapDesign = q("#toolbar-map-design-toggle");
 
     dom.datasetPanel = q("#dataset-panel");
     dom.datasetPanelLoading = q("#dataset-panel-loading");
@@ -657,12 +662,9 @@
     dom.downloadPanelClose = q("#download-panel-close");
     dom.downloadStatus = q("#download-status");
     dom.downloadActions = qa("[data-export-format]", dom.downloadPanel);
-    dom.parcelPanel = q("#parcel-selection-panel");
-    dom.parcelPanelClose = q("#parcel-selection-close");
-    dom.parcelModeButtons = qa("[data-parcel-mode]", dom.parcelPanel);
-    dom.parcelClear = q("[data-parcel-clear]", dom.parcelPanel);
-    dom.parcelCount = q("[data-parcel-count]", dom.parcelPanel);
-    dom.parcelStatus = q("[data-parcel-status]", dom.parcelPanel);
+    dom.mapDesignPanel = q("#map-design-panel");
+    dom.mapDesignPanelClose = q("#map-design-close");
+    dom.mapDesignOptions = qa("[data-map-design]", dom.mapDesignPanel);
     dom.statusBanner = q("#map-status-banner");
     dom.statusBannerText = q("#map-status-banner-text");
     dom.statusToast = q("#map-status");
@@ -726,15 +728,6 @@
       setBanner(
         "danger",
         cfg.serverErrorMsg ? ("Server-Fallback aktiv: " + cfg.serverErrorMsg) : "Server-Fallback aktiv.",
-        true
-      );
-      return;
-    }
-
-    if (cfg.styleTokenMismatch) {
-      setBanner(
-        "danger",
-        "Für den gewählten Mapbox-Stil ist aktuell kein gültiger Mapbox-Token verfügbar. OSM-Fallback wird genutzt.",
         true
       );
       return;
@@ -1038,6 +1031,24 @@
         if (!hasOL()) { throw new Error("ol missing after load"); }
         return "loaded";
       });
+  }
+
+  var mapStyleRendererPromise = null;
+
+  function ensureMapStyleRenderer() {
+    function ready() { return !!(window.olms && typeof window.olms.apply === "function"); }
+    if (ready()) { return Promise.resolve(); }
+    if (mapStyleRendererPromise) { return mapStyleRendererPromise; }
+    mapStyleRendererPromise = tryLoadOne([
+      "https://cdn.jsdelivr.net/npm/ol-mapbox-style@" + OLMS_VERSION + "/dist/olms.js",
+      "https://unpkg.com/ol-mapbox-style@" + OLMS_VERSION + "/dist/olms.js"
+    ], function (url) {
+      return loadScript(url, 5000, ready);
+    }, "ol-mapbox-style").catch(function (err) {
+      mapStyleRendererPromise = null;
+      throw err;
+    });
+    return mapStyleRendererPromise;
   }
 
   function ensureOLE() {
@@ -2004,23 +2015,31 @@
     } catch (_) { return null; }
   }
 
+  var featureStyleCache = new WeakMap();
+
   function getFeatureStyleForDataset(dataset, feature, geometryType, resolution) {
     try {
       if (!window.ol || !ol.style) { return undefined; }
       if (!hasUsableStyleContract(dataset)) { return getDefaultFeatureStyle(geometryType); }
       var bundle = getOrCreateDatasetStyleBundle(dataset);
+      var revision = feature.getRevision();
+      var cached = featureStyleCache.get(feature);
+      if (cached && cached.bundle === bundle && cached.revision === revision && cached.geometryType === geometryType) {
+        return cached.style;
+      }
       var rule = selectStyleRule(dataset, feature);
       var ruleId = rule ? firstText(rule.rule_id, rule.id) : "";
       var styleSet = ruleId && bundle.ruleSets[ruleId] ? bundle.ruleSets[ruleId] : bundle.defaultSet;
       var baseStyle = styleForGeometry(styleSet, geometryType);
       var labelOptions = labelOptionsForRule(dataset, rule);
       var textStyle = featureLabelStyle(feature, labelOptions, geometryType);
-      if (!textStyle || !baseStyle) { return baseStyle; }
-      var labelStyle = new ol.style.Style({
+      var labelStyle = textStyle && baseStyle ? new ol.style.Style({
         text: textStyle,
         zIndex: 100 + clamp(numOr(labelOptions.priority, 5), 1, 10)
-      });
-      return [baseStyle, labelStyle];
+      }) : null;
+      var style = labelStyle ? [baseStyle, labelStyle] : baseStyle;
+      featureStyleCache.set(feature, { bundle: bundle, revision: revision, geometryType: geometryType, style: style });
+      return style;
     } catch (_) { return undefined; }
   }
 
@@ -2059,14 +2078,16 @@
         return ol.control.defaults.defaults({
           zoom: false,
           rotate: false,
-          attribution: true
+          attribution: true,
+          attributionOptions: { attributions: OPENFREEMAP_ATTRIBUTION, collapsible: false }
         });
       }
       if (ol.control && typeof ol.control.defaults === "function") {
         return ol.control.defaults({
           zoom: false,
           rotate: false,
-          attribution: true
+          attribution: true,
+          attributionOptions: { attributions: OPENFREEMAP_ATTRIBUTION, collapsible: false }
         });
       }
     } catch (_) {}
@@ -2089,63 +2110,32 @@
     } catch (_) {}
   }
 
-  function createBaseLayers() {
-    var styleId = cfg.styleId || "mapbox/light-v11";
-    var tileSize = cfg.tileSize || 512;
-    var tokenOk = cfg.tokenUsable;
-    var wantsMapbox = asBool(cfg.styleRequiresMapboxToken, true);
+  function createBaseLayers(designId, onDesignChange) {
+    return window.VectoplanBasemap.create(cfg, designId, onDesignChange, ensureMapStyleRenderer);
+  }
 
-    var osmLayer = null;
-    var mapboxLayer = null;
+  function readMapDesignPreference() { return window.VectoplanBasemap.readPreference(); }
 
-    try {
-      osmLayer = new ol.layer.Tile({
-        source: new ol.source.OSM(),
-        visible: !tokenOk || !wantsMapbox
-      });
-      try { osmLayer.set("layerRole", "base-osm"); } catch (_) {}
-    } catch (e1) {
-      logError("[OpenLayer] OSM layer create failed:", e1 && e1.message ? e1.message : e1);
-    }
+  function updateMapDesignUi(designId) {
+    dom.mapDesignOptions.forEach(function (button) {
+      setPressed(button, button.getAttribute("data-map-design") === designId);
+    });
+  }
 
-    if (tokenOk && wantsMapbox) {
-      try {
-        var source = new ol.source.XYZ({
-          url: buildMapboxTileUrl(styleId, cfg.token, tileSize),
-          tileSize: tileSize,
-          crossOrigin: "anonymous",
-          attributions: "© Mapbox © OpenStreetMap"
-        });
-
-        mapboxLayer = new ol.layer.Tile({
-          source: source,
-          visible: true
-        });
-        try { mapboxLayer.set("layerRole", "base-mapbox"); } catch (_) {}
-
-        source.on("tileloaderror", function () {
-          if (state.baseLayers.usingFallbackOsm) { return; }
-          state.baseLayers.usingFallbackOsm = true;
-          logWarn("[OpenLayer] Mapbox tileloaderror → OSM-Fallback");
-          if (mapboxLayer) { safeCall(function () { mapboxLayer.setVisible(false); }); }
-          if (osmLayer) { safeCall(function () { osmLayer.setVisible(true); }); }
-          setBanner("danger", "Mapbox-Kacheln konnten nicht geladen werden. OSM-Fallback ist aktiv.", true);
-          setToast("danger", "Basiskarte", "Mapbox konnte nicht geladen werden. OSM-Fallback wurde aktiviert.", 3600);
-        });
-      } catch (e2) {
-        logWarn("[OpenLayer] Mapbox layer init failed:", e2 && e2.message ? e2.message : e2);
-        mapboxLayer = null;
-      }
-    }
-
-    if (!mapboxLayer && osmLayer) {
-      safeCall(function () { osmLayer.setVisible(true); });
-    }
-
-    return {
-      mapbox: mapboxLayer,
-      osm: osmLayer
-    };
+  function selectMapDesign(designId) {
+    if (!state.map || MAP_DESIGNS.indexOf(designId) === -1) { return; }
+    safeCall(function () { window.localStorage.setItem(MAP_DESIGN_STORAGE_KEY, designId); });
+    if (state.baseLayers.designId === designId) { return; }
+    var previous = state.baseLayers;
+    if (previous.dispose) { previous.dispose(); }
+    ["mapbox", "openfreemap", "osm"].forEach(function (name) {
+      if (previous[name]) { state.map.removeLayer(previous[name]); }
+    });
+    state.baseLayers = createBaseLayers(designId, updateMapDesignUi);
+    var index = 0;
+    ["mapbox", "openfreemap", "osm"].forEach(function (name) {
+      if (state.baseLayers[name]) { state.map.getLayers().insertAt(index++, state.baseLayers[name]); }
+    });
   }
 
   function buildLocationRadiusBbox(center, radiusMeters) {
@@ -2167,46 +2157,31 @@
     ];
   }
 
-  function initializeLocationConstraint(view, anchorProjected) {
-    try {
-      var latitudeRadians = cfg.lat * Math.PI / 180;
-      var projectionScale = Math.max(0.01, Math.abs(Math.cos(latitudeRadians)));
-      state.location.anchorLonLat = [cfg.lon, cfg.lat];
-      state.location.anchorProjected = anchorProjected.slice();
-      state.location.radiusProjectionUnits = cfg.datasetRadiusMeters / projectionScale;
-
-      view.on("change:center", function () {
-        constrainViewToLocationRadius();
-      });
-    } catch (err) {
-      logWarn("[OpenLayer] location constraint init failed:", err && err.message ? err.message : err);
-    }
-  }
-
-  function constrainViewToLocationRadius() {
-    try {
-      if (!state.view || state.location.constraining || !Array.isArray(state.location.anchorProjected)) { return false; }
-      var center = state.view.getCenter();
-      if (!Array.isArray(center) || center.length < 2) { return false; }
-
-      var dx = Number(center[0]) - Number(state.location.anchorProjected[0]);
-      var dy = Number(center[1]) - Number(state.location.anchorProjected[1]);
-      var distance = Math.sqrt(dx * dx + dy * dy);
-      var maxDistance = Math.max(1, numOr(state.location.radiusProjectionUnits, cfg.datasetRadiusMeters));
-      if (!Number.isFinite(distance) || distance <= maxDistance) { return false; }
-
-      var factor = maxDistance / distance;
-      state.location.constraining = true;
-      state.view.setCenter([
-        Number(state.location.anchorProjected[0]) + dx * factor,
-        Number(state.location.anchorProjected[1]) + dy * factor
-      ]);
-      state.location.constraining = false;
-      return true;
-    } catch (_) {
-      state.location.constraining = false;
-      return false;
-    }
+  function createProjectView(anchorProjected, zoom, rotation) {
+    var scale = Math.max(0.01, Math.abs(Math.cos(cfg.lat * Math.PI / 180)));
+    var radius = cfg.datasetRadiusMeters / scale;
+    var view = new ol.View({
+      center: anchorProjected.slice(),
+      zoom: zoom,
+      rotation: rotation || 0,
+      minZoom: cfg.minZoom,
+      maxZoom: cfg.maxZoom,
+      enableRotation: true,
+      // Constrain the entire viewport, including during gestures/animations.
+      // OpenLayers derives the zoom-out limit from this extent and the current
+      // viewport size/rotation; URL zooms and fit() use the same constraints.
+      extent: [anchorProjected[0] - radius, anchorProjected[1] - radius,
+        anchorProjected[0] + radius, anchorProjected[1] + radius],
+      constrainOnlyCenter: false,
+      smoothExtentConstraint: false,
+      smoothResolutionConstraint: false,
+      showFullExtent: false,
+      multiWorld: false
+    });
+    view.on("change:resolution", function () {
+      if (state.view === view) { setDatasetZoomVisibility(getCurrentViewportContext()); }
+    });
+    return view;
   }
 
   function createProjectLocationMarker(map, anchorProjected) {
@@ -2257,13 +2232,17 @@
     var lon = clamp(numOr(lonLat[0], cfg.lon), -180, 180);
     var lat = clamp(numOr(lonLat[1], cfg.lat), -90, 90);
     var projected = ol.proj.fromLonLat([lon, lat]);
-    var projectionScale = Math.max(0.01, Math.abs(Math.cos(lat * Math.PI / 180)));
 
     cfg.lon = lon;
     cfg.lat = lat;
     state.location.anchorLonLat = [lon, lat];
     state.location.anchorProjected = projected.slice();
-    state.location.radiusProjectionUnits = cfg.datasetRadiusMeters / projectionScale;
+    if (state.map && state.view) {
+      var previousView = state.view;
+      previousView.cancelAnimations();
+      state.view = createProjectView(projected, previousView.getZoom(), previousView.getRotation());
+      state.map.setView(state.view);
+    }
     if (Object.prototype.hasOwnProperty.call(options, "manualOverride")) {
       state.location.manualOverride = asBool(options.manualOverride, false);
     }
@@ -2370,19 +2349,14 @@
 
     var controls = buildMapControls();
     var layers = [];
-    var baseLayers = createBaseLayers();
+    var baseLayers = createBaseLayers(readMapDesignPreference(), updateMapDesignUi);
 
     if (baseLayers.mapbox) { layers.push(baseLayers.mapbox); }
+    if (baseLayers.openfreemap) { layers.push(baseLayers.openfreemap); }
     if (baseLayers.osm) { layers.push(baseLayers.osm); }
 
     var anchorProjected = ol.proj.fromLonLat([cfg.lon, cfg.lat]);
-    var view = new ol.View({
-      center: anchorProjected,
-      zoom: cfg.zoom,
-      minZoom: cfg.minZoom,
-      maxZoom: cfg.maxZoom,
-      enableRotation: true
-    });
+    var view = createProjectView(anchorProjected, cfg.zoom, 0);
 
     var map = new ol.Map({
       target: "map",
@@ -2403,21 +2377,15 @@
 
     state.map = map;
     state.view = view;
-    state.baseLayers = {
-      mapbox: baseLayers.mapbox,
-      osm: baseLayers.osm,
-      usingFallbackOsm: !!cfg.styleTokenMismatch
-    };
+    state.baseLayers = baseLayers;
 
-    initializeLocationConstraint(view, anchorProjected);
+    state.location.anchorLonLat = [cfg.lon, cfg.lat];
+    state.location.anchorProjected = anchorProjected.slice();
     createProjectLocationMarker(map, anchorProjected);
+    refreshParcelSelectionLayer();
 
     try {
-      view.on("change:resolution", function () {
-        setDatasetZoomVisibility(getCurrentViewportContext());
-      });
       map.on("moveend", function () {
-        if (constrainViewToLocationRadius()) { return; }
         if (!setDatasetZoomVisibility(getCurrentViewportContext())) { return; }
         scheduleActiveDatasetReload({ reason: "moveend" });
       });
@@ -2427,16 +2395,6 @@
       });
       map.on("singleclick", handleParcelMapClick);
     } catch (_) {}
-    if (cfg.styleTokenMismatch) {
-      if (state.baseLayers.mapbox) { safeCall(function () { state.baseLayers.mapbox.setVisible(false); }); }
-      if (state.baseLayers.osm) { safeCall(function () { state.baseLayers.osm.setVisible(true); }); }
-      setBanner("danger", "Für den gewählten Mapbox-Stil ist kein gültiger Token vorhanden. OSM-Fallback ist aktiv.", true);
-    }
-
-    if (!cfg.mapboxTokenPresent && state.baseLayers.osm) {
-      setToast("danger", "Basiskarte", "Kein gültiger MAPBOX_TOKEN vorhanden. OSM-Fallback aktiv.", 3200);
-    }
-
     try {
       map.once("rendercomplete", function () {
         logInfo("[OpenLayer] Karte gerendert");
@@ -2539,12 +2497,10 @@
 
     if (!wasSuppressed) {
       state.datasets.requestSerial += 1;
+      // Keep complete geometry when zoom temporarily hides the layer.
+      if (state.datasets.loading) { state.datasets.lastViewportKey = ""; }
       state.datasets.loading = false;
-      state.datasets.lastFeatureCount = 0;
-      state.datasets.lastViewportKey = "";
-      try {
-        if (state.datasetSource) { state.datasetSource.clear(true); }
-      } catch (_) {}
+      state.datasets.requestViewportKey = "";
       updateViewportIndicators(viewport);
     }
 
@@ -2587,10 +2543,6 @@
     return datasetId + ":" + (id || "unknown");
   }
 
-  function isSelectedParcelFeature(feature, dataset) {
-    return !!state.parcelSelection.byId[parcelFeatureId(feature, dataset)];
-  }
-
   function getSelectedParcelStyle() {
     if (selectedParcelStyle) { return selectedParcelStyle; }
     selectedParcelStyle = new ol.style.Style({
@@ -2620,6 +2572,11 @@
 
   function postParcelCatalog() {
     try {
+      if (!state.datasetSource || !datasetLooksLikeParcels(state.activeDataset)) { return; }
+      var catalogKey = [state.activeDataset.id, state.datasetSource.getRevision(), cfg.lon, cfg.lat,
+        state.location.manualOverride].join("::");
+      if (state.datasets.catalogKey === catalogKey) { return; }
+      state.datasets.catalogKey = catalogKey;
       window.parent.postMessage({
         type: "vectoplan-map:parcel-catalog-changed",
         kind: "vectoplan-map:parcel-catalog-changed",
@@ -2634,22 +2591,33 @@
     } catch (_) {}
   }
 
-  function updateParcelSelectionUi(message) {
-    var count = parcelSelectionItems().length;
-    setText(dom.parcelCount, count + (count === 1 ? " Grundstueck ausgewaehlt" : " Grundstuecke ausgewaehlt"));
-    setText(dom.parcelStatus, message || (
-      state.activeDataset
-        ? "Klick auf ein Flurstueck waehlt es aus oder ab."
-        : "Bitte einen Polygon-Datensatz auswaehlen."
-    ));
-    toArray(dom.parcelModeButtons).forEach(function (button) {
-      setPressed(button, asText(button.getAttribute("data-parcel-mode"), "") === state.parcelSelection.mode);
-    });
-    if (dom.btnParcels) {
-      dom.btnParcels.dataset.count = String(count);
-      setPressed(dom.btnParcels, state.parcelSelection.panelOpen);
-      setExpanded(dom.btnParcels, state.parcelSelection.panelOpen);
+  function refreshParcelSelectionLayer() {
+    if (!state.map) { return; }
+    if (!state.parcelSelection.source) {
+      state.parcelSelection.source = new ol.source.Vector({ wrapX: false });
+      state.parcelSelection.layer = new ol.layer.Vector({
+        source: state.parcelSelection.source,
+        style: getSelectedParcelStyle(),
+        zIndex: 600
+      });
+      state.parcelSelection.layer.set("layerRole", "parcel-selection");
+      state.map.addLayer(state.parcelSelection.layer);
     }
+    var format = new ol.format.GeoJSON();
+    var features = [];
+    parcelSelectionItems().forEach(function (parcel) {
+      try {
+        var feature = format.readFeature({
+          type: "Feature", id: parcel.parcelId, geometry: parcel.geometry,
+          properties: parcel.properties
+        }, { dataProjection: "EPSG:4326", featureProjection: state.view.getProjection() });
+        if (feature) { features.push(feature); }
+      } catch (err) {
+        logWarn("[OpenLayer] Invalid selected parcel geometry:", parcel.parcelId);
+      }
+    });
+    state.parcelSelection.source.clear();
+    state.parcelSelection.source.addFeatures(features);
   }
 
   function postParcelSelection() {
@@ -2674,7 +2642,7 @@
       }, "*");
     } catch (_) {}
     try { if (state.datasetLayer) { state.datasetLayer.changed(); } } catch (_) {}
-    updateParcelSelectionUi();
+    refreshParcelSelectionLayer();
   }
 
   function datasetLooksLikeParcels(dataset) {
@@ -2702,11 +2670,9 @@
       state.datasetSource.getFeatures().forEach(function (feature) {
         var geometry = feature && feature.getGeometry ? feature.getGeometry() : null;
         if (!geometry) { return; }
-        var parcel = parcelFromFeature(feature);
-        if (!parcel) { return; }
         var area = typeof geometry.getArea === "function" ? numOr(geometry.getArea(), Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
         if (typeof geometry.intersectsCoordinate === "function" && geometry.intersectsCoordinate(coordinate)) {
-          candidates.push({ parcel: parcel, area: area, distance: 0 });
+          candidates.push({ feature: feature, area: area, distance: 0 });
           return;
         }
         if (typeof geometry.getClosestPoint === "function") {
@@ -2716,7 +2682,7 @@
           var dy = Number(closest[1]) - Number(coordinate[1]);
           var distance = Math.sqrt(dx * dx + dy * dy);
           if (Number.isFinite(distance)) {
-            nearestCandidates.push({ parcel: parcel, area: area, distance: distance });
+            nearestCandidates.push({ feature: feature, area: area, distance: distance });
           }
         }
       });
@@ -2734,13 +2700,15 @@
       }
     }
     if (!candidates.length) {
-      state.parcelSelection.defaultCoordinateSelectionDone = true;
+      // Hydration may finish before the matching feature's batch arrives.
+      // Only a successful selection completes automatic coordinate matching.
       return false;
     }
     candidates.sort(function (left, right) {
       return left.distance === right.distance ? left.area - right.area : left.distance - right.distance;
     });
-    var selected = candidates[0].parcel;
+    var selected = parcelFromFeature(candidates[0].feature);
+    if (!selected) { return false; }
     var alreadySelected = !!state.parcelSelection.byId[selected.parcelId];
     state.parcelSelection.byId[selected.parcelId] = selected;
     state.parcelSelection.defaultCoordinateSelectionDone = true;
@@ -2748,7 +2716,7 @@
       postParcelSelection();
     } else {
       try { if (state.datasetLayer) { state.datasetLayer.changed(); } } catch (_) {}
-      updateParcelSelectionUi();
+      refreshParcelSelectionLayer();
     }
     return true;
   }
@@ -2819,12 +2787,10 @@
       } catch (_) { hit = null; }
     }
     if (!hit) {
-      updateParcelSelectionUi("Kein Grundstueck unter dem Mauszeiger gefunden.");
       return;
     }
     var parcel = parcelFromFeature(hit);
     if (!parcel) {
-      updateParcelSelectionUi("Der aktive Datensatz enthaelt an dieser Stelle kein Polygon.");
       return;
     }
     if (state.parcelSelection.byId[parcel.parcelId]) {
@@ -2911,7 +2877,7 @@
     state.parcelSelection.hydrated = true;
     state.parcelSelection.defaultCoordinateSelectionDone = Object.keys(next).length > 0;
     try { if (state.datasetLayer) { state.datasetLayer.changed(); } } catch (_) {}
-    updateParcelSelectionUi();
+    refreshParcelSelectionLayer();
     window.setTimeout(function () { autoSelectCoordinateParcel(); }, 0);
   }
 
@@ -2985,10 +2951,6 @@
           asText(state.activeDataset.id, "") === asText(dataset.id, "")
         ) ? state.activeDataset : dataset;
 
-        if (isSelectedParcelFeature(feature, currentDataset)) {
-          return getSelectedParcelStyle();
-        }
-
         try {
           var geom = feature && feature.getGeometry ? feature.getGeometry() : null;
           var type = geom && geom.getType ? geom.getType() : currentDataset.geometry_type;
@@ -3023,6 +2985,8 @@
 
     state.datasetLayer = null;
     state.datasetSource = null;
+    state.datasets.catalogKey = "";
+    state.datasets.requestViewportKey = "";
     state.activeDataset = null;
     state.datasets.lastFeatureCount = 0;
     state.datasets.lastViewportKey = "";
@@ -3447,7 +3411,8 @@
       parsed.searchParams.set("lon", viewport.center[0].toFixed(8));
       parsed.searchParams.set("lat", viewport.center[1].toFixed(8));
       parsed.searchParams.set("radius_m", String(cfg.datasetRadiusMeters));
-      parsed.searchParams.set("zoom", Number(viewport.zoom).toFixed(3));
+      // Zoom changes visibility, not the location query or its cache identity.
+      parsed.searchParams.set("zoom", String(cfg.datasetMinLoadZoom));
       parsed.searchParams.set("limit", String(cfg.datasetFeatureLimit));
       parsed.searchParams.set("offset", String(clamp(numOr(requestOptions.offset, 0), 0, cfg.datasetFeatureLimit)));
       parsed.searchParams.set("batch_size", String(clamp(numOr(requestOptions.batchSize, DEFAULT_DATASET_BATCH_SIZE), 1, 250)));
@@ -3684,7 +3649,8 @@
       return Promise.resolve(true);
     }
 
-    if (!options.force && state.datasets.lastViewportKey === viewport.key) {
+    if (!options.force && (state.datasets.lastViewportKey === viewport.key
+      || (state.datasets.loading && state.datasets.requestViewportKey === viewport.key))) {
       return Promise.resolve(false);
     }
 
@@ -3697,6 +3663,7 @@
     var requestSerial = state.datasets.requestSerial + 1;
     state.datasets.requestSerial = requestSerial;
     state.datasets.requestController = requestController;
+    state.datasets.requestViewportKey = viewport.key;
     state.datasets.loading = true;
     updateViewportIndicators(viewport);
 
@@ -3724,7 +3691,9 @@
       }).then(function (result) {
         if (!requestIsCurrent()) { return false; }
 
-        var batchFeatures = Array.isArray(result.features) ? result.features : [];
+        var batchFeatures = (Array.isArray(result.features) ? result.features : [])
+          .slice(0, Math.max(0, cfg.datasetFeatureLimit - loadedFeatureCount));
+        result.features = batchFeatures;
         var isFirstBatch = offset === 0;
         if (isFirstBatch) {
           applyDataset(state.activeDataset, result, {
@@ -3742,9 +3711,6 @@
         loadedFeatureCount += batchFeatures.length;
         finalWarning = asText(result.warning, finalWarning);
         state.datasets.lastFeatureCount = loadedFeatureCount;
-        autoSelectCoordinateParcel();
-        postParcelCatalog();
-
         var nextOffset = clamp(numOr(result.nextOffset, offset + batchFeatures.length), 0, cfg.datasetFeatureLimit);
         var hasMore = asBool(result.hasMore, false)
           && nextOffset > offset
@@ -3777,6 +3743,7 @@
     }).finally(function () {
       if (requestSerial !== state.datasets.requestSerial) { return; }
       state.datasets.loading = false;
+      state.datasets.requestViewportKey = "";
       if (state.datasets.requestController === requestController) {
         state.datasets.requestController = null;
       }
@@ -4243,7 +4210,7 @@
     if (!cfg.datasetExportEnabled || !state.activeDataset) { return; }
     closeDatasetPanel();
     closeEditorPanel();
-    closeParcelSelectionPanel();
+    closeMapDesignPanel();
     state.ui.downloadPanelOpen = true;
     setHidden(dom.downloadPanel, false);
     setExpanded(dom.btnDownload, true);
@@ -4265,7 +4232,7 @@
   function openDatasetPanel() {
     closeDownloadPanel();
     closeEditorPanel();
-    closeParcelSelectionPanel();
+    closeMapDesignPanel();
     state.ui.datasetPanelOpen = true;
     setHidden(dom.datasetPanel, false);
     setExpanded(dom.btnDatasets, true);
@@ -4287,7 +4254,7 @@
     if (openOnly) {
       closeDatasetPanel();
       closeDownloadPanel();
-      closeParcelSelectionPanel();
+      closeMapDesignPanel();
     }
     state.ui.editorPanelOpen = !!openOnly;
     setHidden(dom.editorPanel, !openOnly);
@@ -4298,25 +4265,25 @@
     openEditorPanel(false);
   }
 
-  function openParcelSelectionPanel() {
-    if (cfg.parcelSelectionReadonly) { return; }
+  function openMapDesignPanel() {
     closeDatasetPanel();
     closeDownloadPanel();
     closeEditorPanel();
-    state.parcelSelection.panelOpen = true;
-    setHidden(dom.parcelPanel, false);
-    updateParcelSelectionUi();
+    state.ui.mapDesignPanelOpen = true;
+    setHidden(dom.mapDesignPanel, false);
+    setExpanded(dom.btnMapDesign, true);
+    updateMapDesignUi(state.baseLayers.designId);
   }
 
-  function closeParcelSelectionPanel() {
-    state.parcelSelection.panelOpen = false;
-    setHidden(dom.parcelPanel, true);
-    updateParcelSelectionUi();
+  function closeMapDesignPanel() {
+    state.ui.mapDesignPanelOpen = false;
+    setHidden(dom.mapDesignPanel, true);
+    setExpanded(dom.btnMapDesign, false);
   }
 
-  function toggleParcelSelectionPanel() {
-    if (state.parcelSelection.panelOpen) { closeParcelSelectionPanel(); }
-    else { openParcelSelectionPanel(); }
+  function toggleMapDesignPanel() {
+    if (state.ui.mapDesignPanelOpen) { closeMapDesignPanel(); }
+    else { openMapDesignPanel(); }
   }
 
   function bindUiEvents() {
@@ -4326,27 +4293,19 @@
       });
     }
 
-    if (dom.btnParcels) {
-      dom.btnParcels.addEventListener("click", toggleParcelSelectionPanel);
+    if (dom.btnMapDesign) {
+      dom.btnMapDesign.addEventListener("click", toggleMapDesignPanel);
     }
 
-    if (dom.parcelPanelClose) {
-      dom.parcelPanelClose.addEventListener("click", closeParcelSelectionPanel);
+    if (dom.mapDesignPanelClose) {
+      dom.mapDesignPanelClose.addEventListener("click", closeMapDesignPanel);
     }
 
-    toArray(dom.parcelModeButtons).forEach(function (button) {
+    dom.mapDesignOptions.forEach(function (button) {
       button.addEventListener("click", function () {
-        state.parcelSelection.mode = asText(button.getAttribute("data-parcel-mode"), "add") === "remove" ? "remove" : "add";
-        updateParcelSelectionUi();
+        selectMapDesign(button.getAttribute("data-map-design"));
       });
     });
-
-    if (dom.parcelClear) {
-      dom.parcelClear.addEventListener("click", function () {
-        state.parcelSelection.byId = {};
-        postParcelSelection();
-      });
-    }
 
     if (dom.datasetPanelClose) {
       dom.datasetPanelClose.addEventListener("click", function () {
@@ -4376,7 +4335,6 @@
     if (dom.downloadPanelClose) {
       dom.downloadPanelClose.addEventListener("click", function () {
         closeDownloadPanel();
-        closeParcelSelectionPanel();
       });
     }
 
@@ -4403,6 +4361,7 @@
         closeDatasetPanel();
         closeEditorPanel();
         closeDownloadPanel();
+        closeMapDesignPanel();
       }
     });
 
@@ -4414,12 +4373,13 @@
         closeDatasetPanel();
         closeEditorPanel();
         closeDownloadPanel();
+        closeMapDesignPanel();
       } catch (_) {}
     });
 
     updateEditorButtonState();
     updateViewportIndicators();
-    updateParcelSelectionUi();
+    updateMapDesignUi(readMapDesignPreference());
   }
 
   function syncToolbarVisibility() {
@@ -4491,10 +4451,6 @@
     ensureOL().then(function () {
       createMap();
       startActiveStyleRefresh();
-
-      if (cfg.ui.showToolbar) {
-        setToast("success", "Karte bereit", "Die Werkzeuge liegen rechts oben über der Kartenfläche.", 2000);
-      }
 
       if (cfg.datasetApiEnabled) {
         // Loading the preferred parcel layer must not depend on whether the

@@ -68,7 +68,7 @@ class AttributeRuleAdapterTests(unittest.TestCase):
         script = (Path(__file__).resolve().parents[1] / "static" / "js" / "main.js").read_text(encoding="utf-8")
         self.assertIn("zIndex: options.zIndex", script)
         self.assertIn("100 + clamp(numOr(labelOptions.priority, 5), 1, 10)", script)
-        self.assertIn("return [baseStyle, labelStyle]", script)
+        self.assertIn("labelStyle ? [baseStyle, labelStyle] : baseStyle", script)
 
 if __name__ == "__main__":
     unittest.main()
