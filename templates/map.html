@@ -268,41 +268,6 @@
       font-size: .95em;
     }
 
-    .parcel-selection-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
-
-    .parcel-selection-action {
-      min-height: 42px;
-      border: 1px solid rgba(15,98,254,.22);
-      border-radius: 10px;
-      background: rgba(15,98,254,.06);
-      color: var(--ol-ui-fg);
-      font: 750 12px/1 var(--ol-ui-font);
-      cursor: pointer;
-    }
-
-    .parcel-selection-action[aria-pressed="true"] {
-      color: #fff;
-      background: var(--ol-ui-accent);
-      border-color: var(--ol-ui-accent);
-    }
-
-    .parcel-selection-action--clear { grid-column: 1 / -1; background: transparent; }
-
-    .parcel-selection-summary {
-      display: grid;
-      gap: 3px;
-      padding: 10px 12px;
-      border-radius: 10px;
-      background: rgba(15,98,254,.08);
-    }
-
-    .parcel-selection-summary strong { color: #0f62fe; font-size: 13px; }
-    .parcel-selection-summary small { color: var(--ol-ui-muted); line-height: 1.35; }
-
     .dataset-list {
       list-style: none;
       margin: 0;
@@ -497,7 +462,7 @@
   </noscript>
 
   <!-- Professionelles UI-CSS nach den kritischen Fallback-Regeln laden. -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260731-preview-mode-2"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260912-map-design-1"/>
 </head>
 <body>
   <!-- Kartenfläche -->
@@ -544,22 +509,19 @@
         {% endif %}
 
         <button
-          id="toolbar-parcels-toggle"
+          id="toolbar-map-design-toggle"
           class="toolbar-button"
           type="button"
-          aria-label="Baugrundst&uuml;cke ausw&auml;hlen"
-          aria-controls="parcel-selection-panel"
+          aria-label="Kartendesign auswählen"
+          aria-controls="map-design-panel"
           aria-expanded="false"
-          data-action="toggle-parcel-selection"
-          {% if parcel_selection_readonly|default(false) %}disabled{% endif %}
-         data-i18n-aria-label="server.openlayer.map.button_aria-label.baugrundst_cke_ausw_hlen.10c32967">
+          data-action="toggle-map-design"
+        >
           <span class="toolbar-button__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-              <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Zm-7.5-7.5v4h4v-4h-4Zm9 0v4h4v-4h-4Zm-9 9v4h4v-4h-4Zm9 0v4h4v-4h-4Z"/>
+              <path d="m15 3 6 3v15l-6-3-6 3-6-3V3l6 3 6-3Zm-5 4.7v10.6l4-2V5.7l-4 2ZM5 6.2v10.6l3 1.5V7.7L5 6.2Zm11-.5v10.6l3 1.5V7.2l-3-1.5Z"/>
             </svg>
           </span>
-          <span class="toolbar-button__label"><span data-i18n="vectoplan.server.openlayer.map.span.grundst.c7b05f20">Grundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke.27a1ebc5">cke</span></span>
-          <span class="sr-only"><span data-i18n="vectoplan.server.openlayer.map.span.baugrundst.2fdc2fe6">Baugrundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke_ausw.bba64227">cke ausw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen.631b5781">hlen</span></span>
         </button>
 
         <button
@@ -717,29 +679,26 @@
       </section>
 
       <section
-        id="parcel-selection-panel"
-        class="floating-panel"
-        data-role="parcel-selection-panel"
-        aria-labelledby="toolbar-parcels-toggle"
+        id="map-design-panel"
+        class="floating-panel map-design-panel"
+        data-role="map-design-panel"
+        aria-labelledby="map-design-title"
         hidden
       >
         <div class="floating-panel__header">
-          <div>
-            <h2 class="floating-panel__title"><span data-i18n="vectoplan.server.openlayer.map.span.worldedit_grundst.b60f24dd">WorldEdit-Grundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke.5383e509">cke</span></h2>
-            <div class="floating-panel__meta" data-i18n="vectoplan.server.openlayer.map.div.projektweite_baumaske.53d2822e">Projektweite Baumaske</div>
-          </div>
-          <button id="parcel-selection-close" class="floating-panel__close" type="button" aria-label="Grundst&uuml;cksauswahl schlie&szlig;en" data-i18n-aria-label="server.openlayer.map.button_aria-label.grundst_cksauswahl_schlie_en.4fe9e8c5">&times;</button>
+          <h2 class="floating-panel__title" id="map-design-title">Kartendesign</h2>
+          <button id="map-design-close" class="floating-panel__close" type="button" aria-label="Kartendesign schließen">&times;</button>
         </div>
-        <div class="floating-panel__body">
-          <p class="panel-note"><span data-i18n="vectoplan.server.openlayer.map.span.klicke_flurst.b20ac5de">Klicke Flurst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke_direkt_an_um_sie_auszuw.6b37bed6">cke direkt an, um sie auszuw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen_oder_abzuw.7e34d6e2">hlen oder abzuw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen_benachbarte_fl.dbf73239">hlen. Benachbarte Fl</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.chen_bilden_gemeinsam_eine_baumaske_da.8f71a531">chen bilden gemeinsam eine Baumaske; das Voxelraster bleibt global stabil.</span></p>
-          <div class="parcel-selection-actions">
-            <button type="button" class="parcel-selection-action parcel-selection-action--clear" data-parcel-clear data-i18n="vectoplan.server.openlayer.map.button.auswahl_leeren.10f7aa21">Auswahl leeren</button>
-          </div>
-          <div class="parcel-selection-summary">
-            <strong data-parcel-count><span data-i18n="vectoplan.server.openlayer.map.span.0_grundst.e925efc2">0 Grundst</span>&uuml;<span data-i18n="vectoplan.server.openlayer.map.span.cke_ausgew.8130d83c">cke ausgew</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlt.8f399f65">hlt</span></strong>
-            <small data-parcel-status><span data-i18n="vectoplan.server.openlayer.map.span.bitte_einen_polygon_datensatz_ausw.f1f331b2">Bitte einen Polygon-Datensatz ausw</span>&auml;<span data-i18n="vectoplan.server.openlayer.map.span.hlen.7ad0236b">hlen.</span></small>
-          </div>
+        <div class="floating-panel__body map-design-grid">
+          {% for design_id, design_label in [('light', 'Hell'), ('dark', 'Dunkel')] %}
+          <button type="button" class="map-design-option" data-map-design="{{ design_id }}"
+                  aria-label="{{ design_label }}" aria-pressed="{{ 'true' if design_id == 'light' else 'false' }}">
+            <img src="{{ url_for('static', filename='map-designs/' ~ design_id ~ '.png') }}?v=20260912-textless-1"
+                 width="360" height="216" alt="" loading="lazy" draggable="false"/>
+          </button>
+          {% endfor %}
         </div>
+        <p id="map-cache-status" class="panel-note" style="padding:0 16px 12px" role="status" hidden></p>
       </section>
 
       <section
@@ -828,18 +787,14 @@
 
     <div
       id="map-status-banner"
-      class="floating-banner {% if server_error or style_token_mismatch %}floating-banner--danger{% else %}floating-banner--success{% endif %}"
+      class="floating-banner floating-banner--danger"
       data-role="map-status-banner"
       role="status"
-      {% if not server_error and not style_token_mismatch %}hidden{% endif %}
+      {% if not server_error %}hidden{% endif %}
     >
       <p class="floating-banner__title">
         {% if server_error %}<span data-i18n="vectoplan.server.openlayer.map.span.kartenoberfl_che_mit_server_fallback.8c0062ad">
           Kartenoberfläche mit Server-Fallback
-        </span>{% elif style_token_mismatch %}<span data-i18n="vectoplan.server.openlayer.map.span.mapbox_stil_ben_tigt_token.990032fc">
-          Mapbox-Stil benötigt Token
-        </span>{% else %}<span data-i18n="vectoplan.server.openlayer.map.span.karte_initialisiert.b125a341">
-          Karte initialisiert
         </span>{% endif %}
       </p>
       <p class="floating-banner__text" id="map-status-banner-text">
@@ -848,11 +803,6 @@
           </span><strong>{{ server_error_msg | default("unknown_error") }}</strong>
           {% if server_error_detail %} ({{ server_error_detail }}){% endif %}<span data-i18n="vectoplan.server.openlayer.map.span.die_oberfl_che_wurde_mit_sicheren_fall.dbf8328a">.
           Die Oberfläche wurde mit sicheren Fallback-Werten geladen.
-        </span>{% elif style_token_mismatch %}<span data-i18n="vectoplan.server.openlayer.map.span.f_r_den_gew_hlten_stil.63d431fe">
-          Für den gewählten Stil </span><strong>{{ style_id | default("mapbox/light-v11") }}</strong><span data-i18n="vectoplan.server.openlayer.map.span.wird_ein_mapbox_token_ben_tigt_die_cli.45ee8ce3">
-          wird ein Mapbox-Token benötigt. Die Client-Logik kann auf einen Fallback wechseln.
-        </span>{% else %}<span data-i18n="vectoplan.server.openlayer.map.span.die_kartenoberfl_che_wurde_initialisie.f57fe88d">
-          Die Kartenoberfläche wurde initialisiert.
         </span>{% endif %}
       </p>
     </div>
@@ -1124,6 +1074,8 @@
   </script>
 
   <!-- Lokales JS -->
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260818-mobile-panel-1" defer></script>
+  <script src="{{ url_for('static', filename='js/basemap.js') }}?v=20260912-project-cache-1" defer></script>
+  <script src="{{ url_for('static', filename='js/map-cache-status.js') }}?v=20260912-project-cache-1" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260912-parcels-3" defer></script>
 </body>
 </html>

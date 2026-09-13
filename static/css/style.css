@@ -972,6 +972,58 @@ body {
   color: var(--app-accent);
 }
 
+.map-design-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.map-design-option {
+  position: relative;
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 2px solid #dce6ea;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #edf2f3;
+  cursor: pointer;
+  aspect-ratio: 5 / 3;
+}
+
+.map-design-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.map-design-option:hover { border-color: #71aebc; }
+.map-design-option:focus-visible { outline: 3px solid #71aebc; outline-offset: 3px; }
+.map-design-option[aria-pressed="true"] { border-color: #0b7894; }
+.map-design-option[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #0b7894;
+  box-shadow: 0 0 0 2px #fff;
+}
+.map-design-option[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  top: 13px;
+  right: 12px;
+  width: 10px;
+  height: 6px;
+  border-bottom: 2px solid #fff;
+  border-left: 2px solid #fff;
+  transform: rotate(-45deg);
+}
+
 .panel-note {
   padding: 10px 12px;
   border: 1px solid #e0e9ed;

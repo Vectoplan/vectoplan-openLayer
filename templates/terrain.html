@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>VECTOPLAN Kartentexturen</title>
+  <style>html,body{margin:0;overflow:hidden}#map{position:relative;width:768px;height:768px}.ol-layer{position:absolute;inset:0}</style>
+</head>
+<body>
+  <div id="map" aria-hidden="true"></div>
+  <script>window.TERRAIN_BASEMAP_CONFIG = {{ basemap_config | tojson }};</script>
+  <script src="{{ url_for('static', filename='js/basemap.js') }}?v=20260912-zoom-1"></script>
+  <script src="{{ url_for('static', filename='js/terrain-renderer.js') }}?v=20260912-zoom-1"></script>
+</body>
+</html>

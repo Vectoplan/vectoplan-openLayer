@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import re
+import os
+import requests
 from functools import lru_cache
 from typing import Any, Mapping, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
-from flask import Blueprint, Response, current_app, make_response, render_template, request
+from flask import Blueprint, Response, current_app, jsonify, make_response, render_template, request
 
 try:
     from settings import Settings, get_settings
@@ -15,6 +17,60 @@ except Exception:  # pragma: no cover
 
 
 bp = Blueprint("map", __name__)
+
+
+@bp.get("/api/map/projects/<identity>/<path:resource>")
+def project_map_resource(identity, resource):
+    """Public basemap bytes only. Core keeps project identity and download jobs.
+
+    No arbitrary URL proxy and no project metadata/model data is exposed here.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", identity) or not re.fullmatch(
+        r"(?:status|style/(?:light|dark)|tiles/[A-Za-z0-9_-]+/\d{1,2}/\d{1,8}/\d{1,8}|sprites/(?:light|dark)(?:@2x)?\.(?:json|png)|fonts/(?:light|dark)/[^/]{1,160}/\d{1,5}-\d{1,5}\.pbf)", resource):
+        return jsonify(ok=False, error="invalid_map_resource"), 400
+    base = os.environ.get("VECTOPLAN_CORE_INTERNAL_URL", "http://vectoplan-core:5000").rstrip("/")
+    key = os.environ.get("VECTOPLAN_CORE_INTERNAL_API_KEY", "")
+    headers = {"X-Service-API-Key": key, "X-Service-ID": "openlayer"}
+    if request.headers.get("If-None-Match"):
+        headers["If-None-Match"] = request.headers["If-None-Match"]
+    try:
+        result = requests.get(base + "/api/v1/map-cache/" + quote(identity, safe="") + "/" + quote(resource, safe="/@.-"),
+                              headers=headers, timeout=55, allow_redirects=False)
+    except requests.RequestException:
+        return jsonify(ok=False, error="map_storage_unavailable"), 503, {"Retry-After": "3"}
+    response = Response(result.content, status=result.status_code)
+    for name in ("Content-Type", "Cache-Control", "ETag", "Retry-After", "X-Map-Storage", "Location"):
+        if name in result.headers:
+            response.headers[name] = result.headers[name]
+    return response
+
+
+@bp.get("/map/terrain")
+def terrain_map_view():
+    """Browser-only texture renderer sharing the 2D design preference/policy.
+
+    Only the project identity enters the document. Public map resources are
+    served through Core's project map package; no credentials enter the page.
+    """
+    config = {
+        "token": "", "tokenUsable": False, "styleRequiresMapboxToken": False,
+        "projectPublicId": request.args.get("map_project_id", "")[:160],
+    }
+    response = make_response(render_template("terrain.html", basemap_config=config))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.get("/api/map/context-provider")
+def context_provider():
+    """Raster counterpart of this map for aligned, read-only CAD backgrounds."""
+    osm = {"id": "osm", "tileUrl": "https://tile.openstreetmap.org/{z}/{x}/{y}.png", "maxZoom": 19,
+           "attribution": {"label": "© OpenStreetMap-Mitwirkende", "url": "https://www.openstreetmap.org/copyright"}}
+    # Legacy raster clients retain OSM as a last-resort live fallback. The
+    # design renderer always uses OpenFreeMap; OSM is never prefetched.
+    response = jsonify({"ok": True, "provider": osm, "fallback": osm, "designProvider": "openfreemap"})
+    response.headers["Cache-Control"] = "private, max-age=300"
+    return response
 
 # Nur Styles im Format "<owner>/<style-id>"
 _STYLE_RE = re.compile(r"^[a-z0-9\-]+/[a-z0-9\-\.]+$", re.IGNORECASE)
@@ -584,7 +640,7 @@ def _build_context(settings: Settings) -> dict[str, Any]:
         )
         enable_wheel_zoom = (not disable_scroll) and bool(map_enable_wheel_zoom)
 
-        mapbox_token = _safe_str(getattr(settings, "mapbox_token", None), "")
+        mapbox_token = ""  # Mapbox is disabled for design maps, including configured tokens.
         token_present = _safe_bool(getattr(settings, "has_mapbox_token", bool(mapbox_token.strip())), bool(mapbox_token.strip()))
         style_requires_token = _style_requires_mapbox_token(style_id)
         style_token_mismatch = bool(style_requires_token and not token_present)
